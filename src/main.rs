@@ -1,8 +1,11 @@
 use std::fs::File;
 use std::io::BufWriter;
+use std::io::Write;
 use std::iter::repeat_with;
 use std::path::Path;
 
+use image::codecs::gif::{GifEncoder, Repeat};
+use image::{Delay, Frame, ImageBuffer, Rgba};
 use rand::Rng;
 
 #[derive(Clone)]
@@ -27,6 +30,17 @@ impl Image {
                 .iter()
                 .map(|channel| (*channel as f32) / 255.0)
                 .collect(),
+            png::ColorType::Rgba => {
+                let mut data = Vec::new();
+
+                for pixel in bytes.chunks_exact(4) {
+                    for channel in pixel.iter().take(3) {
+                        data.push(*channel as f32 / 255.0);
+                    }
+                }
+
+                data
+            }
             ty => {
                 println!("unknown color type: {ty:?}. only 24-bit RGB images are supported");
                 unimplemented!()
@@ -103,7 +117,7 @@ impl Image {
     }
 
     fn apply_smudge(&mut self, smudge: Smudge) {
-        let (x, y, p) = (smudge.x, smudge.y, smudge.p);
+        let (x, y, p) = (smudge.x, smudge.y, smudge.p.rgb());
 
         self.blend_pixel(x, y, p, 0.7);
         self.blend_pixel(x, y - 1, p, 0.5);
@@ -120,10 +134,35 @@ impl Image {
         for (a, b) in self.pixels.iter().zip(other.pixels.iter()) {
             // dot product with extreme punishment for bad color delta
             let delta = (a - b).abs();
-            d += a * b * delta * delta * delta * delta;
+            d += a * b * delta * delta * delta * delta * delta * delta * delta;
         }
 
         d
+    }
+
+    fn debug_image_buffer(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        const SCALE: u32 = 8;
+        let mut buf = ImageBuffer::new(self.width * SCALE, self.height * SCALE);
+        for x in 0..self.width {
+            for y in 0..self.height {
+                let p = self.get_pixel(x, y);
+                for ix in 0..SCALE {
+                    for iy in 0..SCALE {
+                        buf.put_pixel(
+                            SCALE * x + ix,
+                            SCALE * y + iy,
+                            Rgba([
+                                (p.r * 255.0) as u8,
+                                (p.g * 255.0) as u8,
+                                (p.b * 255.0) as u8,
+                                0xff,
+                            ]),
+                        );
+                    }
+                }
+            }
+        }
+        buf
     }
 }
 
@@ -148,29 +187,13 @@ impl Rgb {
 struct Smudge {
     x: u32,
     y: u32,
-    p: Rgb,
+    p: Brush,
 }
 
 impl Smudge {
-    fn random(brushes: &[Rgb], width: u32, height: u32) -> Vec<Self> {
-        let mut subsmudges = Vec::new();
-
-        subsmudges.push(Self {
-            x: rand::thread_rng().gen_range(0..width),
-            y: rand::thread_rng().gen_range(0..height),
-            p: brushes[rand::thread_rng().gen_range(0..brushes.len())],
-        });
-
-        if rand::thread_rng().gen_bool(0.5) {
-            subsmudges.push(subsmudges[0].make_variation(brushes, width, height));
-        }
-
-        subsmudges
-    }
-
-    fn make_variation(&self, brushes: &[Rgb], width: u32, height: u32) -> Self {
-        let xdelta = rand::thread_rng().gen_range(-1..1);
-        let ydelta = rand::thread_rng().gen_range(-1..1);
+    fn make_variation(&self, brushes: &[Brush], width: u32, height: u32) -> Self {
+        let xdelta = rand::thread_rng().gen_range(-1..=1);
+        let ydelta = rand::thread_rng().gen_range(-1..=1);
 
         Self {
             x: (self.x as i32 + xdelta).clamp(0, width as i32 - 1) as u32,
@@ -184,74 +207,173 @@ impl Smudge {
     }
 }
 
-fn score_smudge(smudges: Vec<Smudge>, canvas: &Image, target: &Image) -> (Vec<Smudge>, f32) {
-    let mut im = canvas.clone();
+#[derive(Clone, Default)]
+struct SmudgePattern {
+    smudges: Vec<Smudge>,
+}
 
-    for smudge in &smudges {
-        im.apply_smudge(*smudge);
+#[derive(Clone, Default)]
+struct RankedSmudgePattern {
+    pattern: SmudgePattern,
+    rank: f32,
+}
+
+impl SmudgePattern {
+    fn random(brushes: &[Brush], width: u32, height: u32) -> Self {
+        let mut smudges = Vec::new();
+
+        smudges.push(Smudge {
+            x: rand::thread_rng().gen_range(0..width),
+            y: rand::thread_rng().gen_range(0..height),
+            p: brushes[rand::thread_rng().gen_range(0..brushes.len())],
+        });
+
+        if rand::thread_rng().gen_bool(0.5) {
+            smudges.push(smudges[0].make_variation(brushes, width, height));
+        }
+
+        Self { smudges }
     }
 
-    (smudges, im.dist(target))
+    fn make_variation(&self, brushes: &[Brush], width: u32, height: u32) -> Self {
+        Self {
+            smudges: self
+                .smudges
+                .iter()
+                .map(|s| s.make_variation(brushes, width, height))
+                .collect(),
+        }
+    }
+
+    fn rank(self, canvas: &Image, target: &Image) -> RankedSmudgePattern {
+        let mut im = canvas.clone();
+
+        for smudge in &self.smudges {
+            im.apply_smudge(*smudge);
+        }
+
+        RankedSmudgePattern {
+            pattern: self,
+            rank: im.dist(target),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+enum Brush {
+    #[default]
+    White,
+    Yellow,
+    Orange,
+    Red,
+    Violet,
+    Blue,
+    Green,
+    Magenta,
+    Cyan,
+    Grey,
+    DarkGrey,
+    Black,
+    DarkGreen,
+    Brown,
+    Pink,
+}
+
+impl Brush {
+    #[rustfmt::skip]
+    fn rgb(&self) -> Rgb {
+        match self {
+            Self::White     => Rgb::from_u8(0xff, 0xff, 0xff),
+            Self::Yellow    => Rgb::from_u8(0xff, 0xf0, 0x00),
+            Self::Orange    => Rgb::from_u8(0xff, 0x6c, 0x00),
+            Self::Red       => Rgb::from_u8(0xff, 0x00, 0x00),
+            Self::Violet    => Rgb::from_u8(0x8a, 0x00, 0xff),
+            Self::Blue      => Rgb::from_u8(0x00, 0x0c, 0xff),
+            Self::Green     => Rgb::from_u8(0x0c, 0xff, 0x00),
+            Self::Magenta   => Rgb::from_u8(0xfc, 0x00, 0xff),
+            Self::Cyan      => Rgb::from_u8(0x00, 0xff, 0xea),
+            Self::Grey      => Rgb::from_u8(0xbe, 0xbe, 0xbe),
+            Self::DarkGrey  => Rgb::from_u8(0x7b, 0x7b, 0x7b),
+            Self::Black     => Rgb::from_u8(0x00, 0x00, 0x00),
+            Self::DarkGreen => Rgb::from_u8(0x00, 0x64, 0x00),
+            Self::Brown     => Rgb::from_u8(0x96, 0x4b, 0x00),
+            Self::Pink      => Rgb::from_u8(0xff, 0xc0, 0xcb),
+        }
+    }
 }
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: falsecolor <path/to/image.png>");
-        return;
+        print_help()
     };
 
-    let brushes = vec![
-        Rgb::from_u8(0xff, 0xff, 0xff), // white
-        Rgb::from_u8(0xff, 0xf0, 0x00), // yellow
-        Rgb::from_u8(0xff, 0x6c, 0x00), // orange
-        Rgb::from_u8(0xff, 0x00, 0x00), // red
-        Rgb::from_u8(0x8a, 0x00, 0xff), // violet
-        Rgb::from_u8(0x00, 0x0c, 0xff), // blue
-        Rgb::from_u8(0x0c, 0xff, 0x00), // green
-        Rgb::from_u8(0xfc, 0x00, 0xff), // magenta
-        Rgb::from_u8(0x00, 0xff, 0xea), // cyan
-        Rgb::from_u8(0xbe, 0xbe, 0xbe), // grey
-        Rgb::from_u8(0x7b, 0x7b, 0x7b), // dark_grey
-        Rgb::from_u8(0x00, 0x00, 0x00), // black
-        Rgb::from_u8(0x00, 0x64, 0x00), // dark_green
-        Rgb::from_u8(0x96, 0x4b, 0x00), // brown
-        Rgb::from_u8(0xff, 0xc0, 0xcb), // pink
-    ];
+    let Some(out_path) = std::env::args().nth(2) else {
+        print_help()
+    };
+
+    let steps = match std::env::args().nth(3) {
+        Some(steps) => steps.parse::<usize>().unwrap_or_else(|_| print_help()),
+        None => print_help(),
+    };
 
     let target = Image::open(&path);
-
     let mut canvas = Image::blank_canvas(target.width, target.height);
 
-    println!("initial dist={}", target.dist(&canvas));
+    let generations = 64;
+    let initial_smudges = 8192;
+    let keep_alive_after_culling = 24;
+    let offspring_count = 4;
+    let linear_chunks = 32;
 
-    const STEPS: usize = 1024;
-    const GENERATIONS: usize = 64;
-    const INITIAL_SMUDGES: usize = 8192;
-    const KEEP_ALIVE_AFTER_CULLING: usize = 24;
-    const OFFSPRINGS: usize = 4;
+    let brushes = vec![
+        Brush::White,
+        Brush::Yellow,
+        Brush::Orange,
+        Brush::Red,
+        Brush::Violet,
+        Brush::Blue,
+        Brush::Green,
+        Brush::Magenta,
+        Brush::Cyan,
+        Brush::Grey,
+        Brush::DarkGrey,
+        Brush::Black,
+        Brush::DarkGreen,
+        Brush::Brown,
+        Brush::Pink,
+    ];
 
-    for _ in 0..STEPS {
+    eprintln!("initial dist={}", target.dist(&canvas));
+
+    let gif_file = File::create(out_path.clone() + ".anim.gif").unwrap();
+    let mut gif_encoder = GifEncoder::new(&gif_file);
+    gif_encoder.set_repeat(Repeat::Infinite).unwrap();
+
+    let mut smudge_history = Vec::new();
+
+    for step in 0..steps {
+        // Pick initial random smudges for this step
         let mut smudges: Vec<_> =
-            repeat_with(|| Smudge::random(&brushes, canvas.width, canvas.height))
-                .take(INITIAL_SMUDGES)
-                .map(|smudge| score_smudge(smudge, &canvas, &target))
+            repeat_with(|| SmudgePattern::random(&brushes, canvas.width, canvas.height))
+                .take(initial_smudges)
+                .map(|pattern| pattern.rank(&canvas, &target))
                 .collect();
 
-        for _ in 0..GENERATIONS {
-            smudges.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            smudges.resize(KEEP_ALIVE_AFTER_CULLING, Default::default());
+        // Find local optima by applying genetic algorithm to random smudges
+        for _ in 0..generations {
+            smudges.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap());
+            smudges.resize(keep_alive_after_culling, Default::default());
 
             let mut new_smudges = Vec::new();
 
             for smudge in &smudges {
-                for _ in 0..OFFSPRINGS {
-                    let smudge = smudge
-                        .0
-                        .iter()
-                        .map(|s| s.make_variation(&brushes, canvas.width, canvas.height))
-                        .collect();
+                for _ in 0..offspring_count {
+                    let new_smudge = smudge
+                        .pattern
+                        .make_variation(&brushes, canvas.width, canvas.height)
+                        .rank(&canvas, &target);
 
-                    new_smudges.push(score_smudge(smudge, &canvas, &target));
+                    new_smudges.push(new_smudge);
                 }
             }
 
@@ -260,16 +382,68 @@ fn main() {
             smudges = new_smudges;
         }
 
-        smudges.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // Apply the best pattern found by genetic algorithm
 
-        let best_smudges = &smudges.first().unwrap().0;
+        smudges.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap());
 
-        for sm in best_smudges {
-            canvas.apply_smudge(*sm);
+        let best_smudges = &smudges.first().unwrap().pattern.smudges;
+        for smudge in best_smudges {
+            canvas.apply_smudge(*smudge);
+            smudge_history.push(*smudge);
+        }
+
+        // Linearize smudges in this chunk by sorting
+        if step % linear_chunks == 0 && step != 0 {
+            let mut new_canvas = Image::blank_canvas(canvas.width, canvas.height);
+
+            smudge_history[step - 32..step].sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
+
+            for smudge in &smudge_history {
+                new_canvas.apply_smudge(*smudge);
+            }
+
+            canvas = new_canvas;
         }
     }
 
-    canvas.save("out.png");
+    canvas.save(out_path.clone());
 
-    println!("dist={}", target.dist(&canvas));
+    // Write debug animation and instructions
+
+    let mut new_canvas = Image::blank_canvas(canvas.width, canvas.height);
+    let mut instructions = File::create(out_path.clone() + ".txt").unwrap();
+
+    for smudges in smudge_history.chunks_exact(linear_chunks) {
+        for smudge in smudges {
+            gif_encoder
+                .encode_frame(Frame::from_parts(
+                    new_canvas.debug_image_buffer(),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(2, 100),
+                ))
+                .unwrap();
+
+            writeln!(&mut instructions, "{:?} {}, {}", smudge.p, smudge.x + 1, smudge.y + 1).unwrap();
+            new_canvas.apply_smudge(*smudge);
+        }
+
+        writeln!(&mut instructions, "---").unwrap();
+    }
+
+    gif_encoder
+        .encode_frame(Frame::from_parts(
+            new_canvas.debug_image_buffer(),
+            0,
+            0,
+            Delay::from_numer_denom_ms(100, 1),
+        ))
+        .unwrap();
+
+    eprintln!("final dist={}", target.dist(&canvas));
+}
+
+fn print_help() -> ! {
+    eprintln!("usage: falsecolor <path/to/image.png> <path/to/output.png> <STEPS>");
+    std::process::exit(2)
 }
