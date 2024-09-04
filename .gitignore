@@ -1,4 +1,9 @@
 /target
+/rel
 *.png
 *.gif
-*.txt
+*.png.txt
+*.pyd
+*.manifest
+*.so
+*.pdb
