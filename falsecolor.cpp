@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <immintrin.h>
 #include <iostream>
+#include <memory_resource>
 #include <numpy/ndarrayobject.h>
 #include <random>
 #include <unordered_map>
@@ -16,13 +17,15 @@
         return NULL;         \
     }
 
-std::mt19937 init_generator() {
+std::mt19937 init_generator()
+{
     std::random_device rd;
     return std::mt19937{rd()};
 }
 
 template<typename T>
-T random(T start, T end) {
+T random(T start, T end)
+{
     static std::mt19937 generator = init_generator();
 
     std::uniform_int_distribution<T> dist(start, end);
@@ -37,9 +40,12 @@ struct Rgb {
     Rgb(float r, float g, float b)
         : r(r)
         , g(g)
-        , b(b) { }
+        , b(b)
+    {
+    }
 
-    static Rgb hex(uint8_t r, uint8_t g, uint8_t b) {
+    static Rgb hex(uint8_t r, uint8_t g, uint8_t b)
+    {
         Rgb color;
 
         color.r = float(r) / 255.0f;
@@ -56,38 +62,58 @@ struct Brush {
 
     Brush(std::string name, Rgb color)
         : color(color)
-        , name(name) { }
+        , name(name)
+    {
+    }
 };
 
-inline __m256 mm256_abs_ps(__m256 x) {
-    static const __m256 sign_mask = _mm256_set1_ps(-0.f);
-    return _mm256_andnot_ps(sign_mask, x);
+static inline __m256 mm256_abs_ps(__m256 x)
+{
+    return _mm256_andnot_ps(_mm256_set1_ps(-0.f), x);
+}
+
+static inline __m256 calc_dist(__m256 a, __m256 b)
+{
+    __m256 delta = mm256_abs_ps(_mm256_sub_ps(a, b));
+    __m256 abs_sq = _mm256_mul_ps(delta, delta);
+    __m256 dot_product = _mm256_mul_ps(a, b);
+    return _mm256_mul_ps(dot_product, _mm256_mul_ps(abs_sq, abs_sq));
 }
 
 #define MAKE_ALIGNED_POINTER(pointer, alignment) ((uintptr_t)(pointer) + (alignment - 1) & ~(uintptr_t)(alignment - 1))
 
 class Image {
 public:
-    Image(size_t width, size_t height)
+    Image(size_t width, size_t height, std::pmr::memory_resource* res)
         : m_width(width)
         , m_height(height)
         , m_data_size(width * height * 3)
-        , m_storage(width * height * 3 + 32, 1.0f) {
+        , m_storage(width * height * 3 + 32, 1.0f, res)
+    {
         m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
     }
 
-    Image(const Image& other) {
+    Image clone(std::pmr::memory_resource* res) const
+    {
+        Image im(m_width, m_height, res);
+        memcpy(im.m_data, m_data, m_data_size * sizeof(float));
+
+        return im;
+    };
+
+    Image(Image&& other) {
         m_width = other.m_width;
         m_height = other.m_height;
         m_data_size = other.m_data_size;
-        m_storage = std::vector<float>(m_data_size * sizeof(float) + 32);
-        m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
-        memcpy(m_data, other.m_data, m_data_size * sizeof(float));
-    };
+        m_data = other.m_data;
+        m_storage = std::move(other.m_storage);
+    }
 
-    Image& operator=(const Image& other) = delete;
+    Image(const Image&) = delete;
+    Image& operator=(const Image&) = delete;
 
-    void set_pixel(size_t x, size_t y, Rgb color) {
+    void set_pixel(size_t x, size_t y, Rgb color)
+    {
         if (x >= m_width || y >= m_height) {
             return;
         }
@@ -99,7 +125,8 @@ public:
         m_data[offset + 2] = color.b;
     }
 
-    Rgb get_pixel(size_t x, size_t y) const {
+    Rgb get_pixel(size_t x, size_t y) const
+    {
         if (x >= m_width || y >= m_height) {
             return Rgb{255, 255, 255};
         }
@@ -115,7 +142,8 @@ public:
         return color;
     }
 
-    void blend_pixel(size_t x, size_t y, Rgb color, float alpha) {
+    void blend_pixel(size_t x, size_t y, Rgb color, float alpha)
+    {
         if (x >= m_width || y >= m_height) {
             return;
         }
@@ -130,34 +158,33 @@ public:
     }
 
 #if 1
-    float dist(const Image& other) const {
-        __m256 d = _mm256_setzero_ps();
+    float dist(const Image& other) const
+    {
+        __m256 dr = _mm256_setzero_ps();
+        __m256 dg = _mm256_setzero_ps();
+        __m256 db = _mm256_setzero_ps();
+
         __m256* data = (__m256*)m_data;
         __m256* other_data = (__m256*)other.m_data;
 
-        for (size_t i = 0; i < m_data_size / 8; i++) {
-            __m256 delta = mm256_abs_ps(_mm256_sub_ps(data[i], other_data[i]));
-            d = _mm256_add_ps(d,
-                _mm256_mul_ps(
-                    _mm256_mul_ps(data[i], other_data[i]),
-                    _mm256_mul_ps(delta,
-                        _mm256_mul_ps(delta,
-                            _mm256_mul_ps(delta,
-                                _mm256_mul_ps(delta,
-                                    _mm256_mul_ps(delta,
-                                        _mm256_mul_ps(delta,
-                                            delta))))))));
+        for (size_t i = 0; i < m_data_size / 8; i += 3) {
+            dr = _mm256_add_ps(dr, calc_dist(data[i], other_data[i]));
+            dg = _mm256_add_ps(dg, calc_dist(data[i + 1], other_data[i + 1]));
+            db = _mm256_add_ps(db, calc_dist(data[i + 2], other_data[i + 2]));
         }
+
+        __m256 out = _mm256_add_ps(dr, _mm256_add_ps(dg, db));
 
         float ds = 0.0f;
         for (int i = 0; i < 8; i++) {
-            ds += ((float*)&d)[i];
+            ds += ((float*)&out)[i];
         }
 
         return ds;
     }
 #else
-    float dist(const Image& other) const {
+    float dist(const Image& other) const
+    {
         float d = 0.0f;
 
         for (size_t i = 0; i < m_data_size; i++) {
@@ -171,16 +198,19 @@ public:
         return d;
     }
 #endif
-    size_t width() const {
+
+    size_t width() const
+    {
         return m_width;
     }
 
-    size_t height() const {
+    size_t height() const
+    {
         return m_height;
     }
 
 private:
-    std::vector<float> m_storage{};
+    std::pmr::vector<float> m_storage{};
     float* m_data{};
     size_t m_data_size{};
     size_t m_width{};
@@ -194,7 +224,8 @@ struct Smudge {
 
     Smudge() = default;
 
-    Smudge make_variation(size_t width, size_t height, size_t brush_count) const {
+    Smudge make_variation(size_t width, size_t height, size_t brush_count) const
+    {
         int xdelta = random<int>(-1, 1);
         int ydelta = random<int>(-1, 1);
 
@@ -212,7 +243,8 @@ struct Smudge {
         return variation;
     }
 
-    void apply(Image& image, const std::vector<Brush>& brushes) const {
+    void apply(Image& image, const std::vector<Brush>& brushes) const
+    {
         if (x >= image.width() || y > image.height()) {
             return;
         }
@@ -236,7 +268,8 @@ struct SmudgePattern {
 
     SmudgePattern() = default;
 
-    static SmudgePattern make_random(size_t width, size_t height, size_t brush_count) {
+    static SmudgePattern make_random(size_t width, size_t height, size_t brush_count)
+    {
         SmudgePattern pattern;
         pattern.smudge1.x = random<size_t>(0, width - 1);
         pattern.smudge1.y = random<size_t>(0, height - 1);
@@ -250,9 +283,10 @@ struct SmudgePattern {
         return pattern;
     }
 
-    RankedSmudgePattern rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes) const;
+    RankedSmudgePattern rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes, std::pmr::memory_resource* res) const;
 
-    SmudgePattern make_variation(size_t width, size_t height, size_t brush_count) const {
+    SmudgePattern make_variation(size_t width, size_t height, size_t brush_count) const
+    {
         SmudgePattern variation;
         variation.smudge1 = smudge1.make_variation(width, height, brush_count);
         variation.has_smudge2 = has_smudge2;
@@ -270,8 +304,9 @@ struct RankedSmudgePattern {
     RankedSmudgePattern() = default;
 };
 
-RankedSmudgePattern SmudgePattern::rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes) const {
-    Image canvas_copy = canvas;
+RankedSmudgePattern SmudgePattern::rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes, std::pmr::memory_resource* res) const
+{
+    Image canvas_copy = canvas.clone(res);
 
     smudge1.apply(canvas_copy, brushes);
     if (has_smudge2) {
@@ -286,8 +321,9 @@ RankedSmudgePattern SmudgePattern::rank(const Image& canvas, const Image& target
     return ranked;
 }
 
-std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brush>& brushes) {
-    Image canvas(target.width(), target.height());
+std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brush>& brushes)
+{
+    Image canvas(target.width(), target.height(), std::pmr::get_default_resource());
 
     int steps = 256;
     int generations = 128;
@@ -300,11 +336,13 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
 
     std::vector<RankedSmudgePattern> patterns(initial_smudges);
 
+    std::pmr::unsynchronized_pool_resource pool{};
+
     for (int step = 0; step < steps; step++) {
         patterns.clear();
 
         for (int i = 0; i < initial_smudges; i++) {
-            patterns.push_back(SmudgePattern::make_random(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes));
+            patterns.push_back(SmudgePattern::make_random(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes, &pool));
         }
 
         for (int g = 0; g < generations; g++) {
@@ -316,7 +354,7 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
 
             for (size_t p = 0; p < keep_alive_after_culling; p++) {
                 for (size_t o = 0; o < offspring_count; o++) {
-                    auto new_pattern = patterns[p].pattern.make_variation(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes);
+                    auto new_pattern = patterns[p].pattern.make_variation(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes, &pool);
                     patterns.push_back(new_pattern);
                 }
             }
@@ -339,7 +377,8 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
     return smudge_history;
 }
 
-static PyObject* fit(PyObject* self, PyObject* args) {
+static PyObject* fit(PyObject* self, PyObject* args)
+{
     import_array();
 
     PyObject* input;
@@ -359,7 +398,7 @@ static PyObject* fit(PyObject* self, PyObject* args) {
     size_t width = PyArray_DIM(input_array, 0);
     size_t height = PyArray_DIM(input_array, 1);
 
-    Image target(width, height);
+    Image target(width, height, std::pmr::get_default_resource());
 
     for (size_t y = 0; y < height; y++) {
         uint8_t* row = (uint8_t*)PyArray_DATA(input_array) + y * PyArray_STRIDES(input_array)[0];
@@ -407,8 +446,7 @@ static PyObject* fit(PyObject* self, PyObject* args) {
 
 PyMethodDef method_table[] = {
     {"fit", (PyCFunction)fit, METH_VARARGS, ""},
-    {NULL, NULL, 0, NULL}
-};
+    {NULL, NULL, 0, NULL}};
 
 PyModuleDef falsecolor_module = {
     PyModuleDef_HEAD_INIT,
@@ -422,6 +460,7 @@ PyModuleDef falsecolor_module = {
     NULL,
 };
 
-PyMODINIT_FUNC PyInit_falsecolor(void) {
+PyMODINIT_FUNC PyInit_falsecolor(void)
+{
     return PyModule_Create(&falsecolor_module);
 }
