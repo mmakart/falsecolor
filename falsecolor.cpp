@@ -82,13 +82,17 @@ static inline __m256 calc_dist(__m256 a, __m256 b)
 
 #define MAKE_ALIGNED_POINTER(pointer, alignment) ((uintptr_t)(pointer) + (alignment - 1) & ~(uintptr_t)(alignment - 1))
 
+struct Smudge;
+
 class Image {
 public:
-    Image(size_t width, size_t height, std::pmr::memory_resource* res)
+    Image(size_t width, size_t height, std::pmr::memory_resource* res, const Image* target = nullptr)
         : m_width(width)
         , m_height(height)
         , m_data_size(width * height * 3)
         , m_storage(width * height * 3 + 32, 1.0f, res)
+        , m_target(target)
+        , m_cached_dist(-1.0f) // default value means not yet calculated distance
     {
         m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
     }
@@ -106,6 +110,7 @@ public:
         m_height = other.m_height;
         m_data_size = other.m_data_size;
         m_data = other.m_data;
+        m_cached_dist = other.m_cached_dist;
         m_storage = std::move(other.m_storage);
     }
 
@@ -155,10 +160,12 @@ public:
         float b = dst.b * (1.0f - alpha) + color.b * alpha;
 
         set_pixel(x, y, Rgb(r, g, b));
+
+        m_cached_dist = dist();
     }
 
 #if 1
-    float dist(const Image& other) const
+    float dist() const
     {
         __m256 out = _mm256_setzero_ps();
 
@@ -174,9 +181,9 @@ public:
                 r1_arr[j] = m_data[i + 3 * j];
                 g1_arr[j] = m_data[i + 3 * j + 1];
                 b1_arr[j] = m_data[i + 3 * j + 2];
-                r2_arr[j] = other.m_data[i + 3 * j];
-                g2_arr[j] = other.m_data[i + 3 * j + 1];
-                b2_arr[j] = other.m_data[i + 3 * j + 2];
+                r2_arr[j] = m_target->m_data[i + 3 * j];
+                g2_arr[j] = m_target->m_data[i + 3 * j + 1];
+                b2_arr[j] = m_target->m_data[i + 3 * j + 2];
             }
             __m256 r1 = *((__m256*) r1_arr.data());
             __m256 g1 = *((__m256*) g1_arr.data());
@@ -243,6 +250,49 @@ public:
         return d;
     }
 #endif
+    float dist(const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes);
+
+    float dist_diff(size_t x, size_t y, Rgb color, float alpha) const
+    {
+        if (x < 0 || y < 0 || x >= m_width || y >= m_height) {
+            return 0.0f;
+        }
+
+        Rgb p1 = get_pixel(x, y);
+        Rgb p2 = m_target->get_pixel(x, y);
+
+        float prev_contribution = color_dist(p1, p2);
+        Rgb p1_changed = blend_pixels(p1, color, alpha);
+        float current_contribution = color_dist(p1_changed, p2);
+
+        return current_contribution - prev_contribution;
+    }
+
+    float color_dist(const Rgb& c1, const Rgb& c2) const
+    {
+        float avg_r = 0.5f * (c1.r + c2.r);
+        float dr = c1.r - c2.r;
+        float dg = c1.g - c2.g;
+        float db = c1.b - c2.b;
+        float dr_sqr = dr * dr;
+        float dg_sqr = dg * dg;
+        float db_sqr = db * db;
+        float coef_r = 2.0f + avg_r;
+        float coef_g = 4.0f;
+        float coef_b = 2.0f - avg_r;
+        float dist_r = coef_r * dr_sqr;
+        float dist_g = coef_g * dg_sqr;
+        float dist_b = coef_b * db_sqr;
+        return dist_r * dist_r + dist_g * dist_g + dist_b * dist_b;
+    }
+
+    Rgb blend_pixels(const Rgb& base, const Rgb& c, float alpha) const
+    {
+        float r = base.r * (1.0f - alpha) + c.r * alpha;
+        float g = base.g * (1.0f - alpha) + c.g * alpha;
+        float b = base.b * (1.0f - alpha) + c.b * alpha;
+        return Rgb(r, g, b);
+    }
 
     size_t width() const
     {
@@ -260,6 +310,8 @@ private:
     size_t m_data_size{};
     size_t m_width{};
     size_t m_height{};
+    float m_cached_dist{};
+    const Image* m_target;
 };
 
 struct Smudge {
@@ -304,6 +356,31 @@ struct Smudge {
     }
 };
 
+// Assumption! m_target is not null
+float Image::dist(const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes)
+{
+    if (m_cached_dist == -1.0f) {
+        m_cached_dist = dist();
+    }
+
+    float distance = m_cached_dist;
+
+    for (auto&& smudge : smudges) {
+        if (smudge.x < 0 || smudge.y < 0 || smudge.x >= m_width || smudge.y >= m_height) {
+            continue;
+        }
+
+        Rgb color = brushes[smudge.brush_index].color;
+        distance += dist_diff(smudge.x, smudge.y, color, 0.7f);
+        distance += dist_diff(smudge.x, smudge.y - 1, color, 0.5f);
+        distance += dist_diff(smudge.x, smudge.y + 1, color, 0.5f);
+        distance += dist_diff(smudge.x - 1, smudge.y, color, 0.5f);
+        distance += dist_diff(smudge.x + 1, smudge.y, color, 0.5f);
+    }
+
+    return distance;
+}
+
 struct RankedSmudgePattern;
 
 struct SmudgePattern {
@@ -328,7 +405,7 @@ struct SmudgePattern {
         return pattern;
     }
 
-    RankedSmudgePattern rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes, std::pmr::memory_resource* res) const;
+    RankedSmudgePattern rank(Image& canvas, const std::vector<Brush>& brushes, std::pmr::memory_resource* res);
 
     SmudgePattern make_variation(size_t width, size_t height, size_t brush_count) const
     {
@@ -349,26 +426,25 @@ struct RankedSmudgePattern {
     RankedSmudgePattern() = default;
 };
 
-RankedSmudgePattern SmudgePattern::rank(const Image& canvas, const Image& target, const std::vector<Brush>& brushes, std::pmr::memory_resource* res) const
+RankedSmudgePattern SmudgePattern::rank(Image& canvas, const std::vector<Brush>& brushes, std::pmr::memory_resource* res)
 {
-    Image canvas_copy = canvas.clone(res);
-
-    smudge1.apply(canvas_copy, brushes);
-    if (has_smudge2) {
-        smudge2.apply(canvas_copy, brushes);
-    }
-
     RankedSmudgePattern ranked;
 
+    std::vector<Smudge> temp_smudges = {smudge1};
+    if (has_smudge2) {
+        temp_smudges.push_back(smudge2);
+    }
+    const std::vector<Smudge> smudges = temp_smudges;
+
     ranked.pattern = *this;
-    ranked.rank = canvas_copy.dist(target);
+    ranked.rank = canvas.dist(smudges, brushes);
 
     return ranked;
 }
 
 std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brush>& brushes)
 {
-    Image canvas(target.width(), target.height(), std::pmr::get_default_resource());
+    Image canvas(target.width(), target.height(), std::pmr::get_default_resource(), &target);
 
     int steps = 256;
     int generations = 128;
@@ -387,7 +463,7 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
         patterns.clear();
 
         for (int i = 0; i < initial_smudges; i++) {
-            patterns.push_back(SmudgePattern::make_random(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes, &pool));
+            patterns.push_back(SmudgePattern::make_random(canvas.width(), canvas.height(), brushes.size()).rank(canvas, brushes, &pool));
         }
 
         for (int g = 0; g < generations; g++) {
@@ -399,7 +475,7 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
 
             for (size_t p = 0; p < keep_alive_after_culling; p++) {
                 for (size_t o = 0; o < offspring_count; o++) {
-                    auto new_pattern = patterns[p].pattern.make_variation(canvas.width(), canvas.height(), brushes.size()).rank(canvas, target, brushes, &pool);
+                    auto new_pattern = patterns[p].pattern.make_variation(canvas.width(), canvas.height(), brushes.size()).rank(canvas, brushes, &pool);
                     patterns.push_back(new_pattern);
                 }
             }
