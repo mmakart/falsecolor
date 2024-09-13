@@ -165,8 +165,6 @@ public:
         const __m256 const2 = _mm256_set1_ps(2.0f);
         const __m256 const4 = _mm256_set1_ps(4.0f);
         const __m256 const0_5 = _mm256_set1_ps(0.5f);
-        const __m256 const255 = _mm256_set1_ps(255.0f);
-        const __m256 const256 = _mm256_set1_ps(256.0f);
 
         __m256 avg_r, dr, dg, db, dr_sqr, dg_sqr, db_sqr, coef_r, coef_g, coef_b, dist_r, dist_g, dist_b;
         std::array<float, 8> r1_arr, g1_arr, b1_arr, r2_arr, g2_arr, b2_arr;
@@ -194,9 +192,9 @@ public:
             dr_sqr = _mm256_mul_ps(dr, dr);
             dg_sqr = _mm256_mul_ps(dg, dg);
             db_sqr = _mm256_mul_ps(db, db);
-            coef_r = _mm256_add_ps(const2, _mm256_div_ps(avg_r, const256));
+            coef_r = _mm256_add_ps(const2, avg_r);
             coef_g = const4;
-            coef_b = _mm256_add_ps(const2, _mm256_div_ps(_mm256_sub_ps(const255, avg_r), const256));
+            coef_b = _mm256_sub_ps(const2, avg_r);
 
             dist_r = _mm256_mul_ps(coef_r, dr_sqr);
             dist_g = _mm256_mul_ps(coef_g, dg_sqr);
