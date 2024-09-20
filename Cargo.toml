@@ -1,9 +1,0 @@
-[package]
-name = "falsecolor"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-image = { version = "0.25.2", default-features = false, features = ["gif"] }
-png = "0.17.13"
-rand = "0.8.5"
