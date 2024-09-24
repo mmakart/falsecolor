@@ -131,12 +131,13 @@ float Image::dist(const Image& target) const
             g2_arr[j] = target.m_data[i + 3 * j + 1];
             b2_arr[j] = target.m_data[i + 3 * j + 2];
         }
-        __m256 r1 = *((__m256*)r1_arr.data());
-        __m256 g1 = *((__m256*)g1_arr.data());
-        __m256 b1 = *((__m256*)b1_arr.data());
-        __m256 r2 = *((__m256*)r2_arr.data());
-        __m256 g2 = *((__m256*)g2_arr.data());
-        __m256 b2 = *((__m256*)b2_arr.data());
+
+	__m256 r1 = _mm256_loadu_ps(r1_arr.data());
+	__m256 g1 = _mm256_loadu_ps(g1_arr.data());
+	__m256 b1 = _mm256_loadu_ps(b1_arr.data());
+	__m256 r2 = _mm256_loadu_ps(r2_arr.data());
+	__m256 g2 = _mm256_loadu_ps(g2_arr.data());
+	__m256 b2 = _mm256_loadu_ps(b2_arr.data());
 
         avg_r = _mm256_mul_ps(const0_5, _mm256_add_ps(r1, r2));
         dr = _mm256_sub_ps(r1, r2);
