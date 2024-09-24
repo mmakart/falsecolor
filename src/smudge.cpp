@@ -23,7 +23,7 @@ Smudge Smudge::make_variation(size_t width, size_t height, size_t brush_count) c
 
 void Smudge::apply(Image& image, const Image& target, const std::vector<Brush>& brushes) const
 {
-    if (x >= image.width() || y > image.height()) {
+    if (x < 0 || y < 0 || x >= image.width() || y >= image.height()) {
         return;
     }
 
