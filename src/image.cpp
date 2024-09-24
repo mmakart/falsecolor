@@ -1,5 +1,6 @@
 #include "image.hpp"
 #include <array>
+#include <cstring>
 #include <immintrin.h>
 #include <memory_resource>
 
