@@ -17,7 +17,6 @@ static inline __m256 calc_dist(__m256 a, __m256 b)
     return _mm256_mul_ps(dot_product, _mm256_mul_ps(abs_sq, abs_sq));
 }
 
-// Assumption! m_target is not null
 float dist(const Image& target, Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes)
 {
     if (canvas.get_dist() == -1.0f) {
@@ -42,6 +41,16 @@ float dist(const Image& target, Image& canvas, const std::vector<Smudge>& smudge
     return distance;
 }
 
+float unoptimized_dist(const Image& target, const Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes, std::pmr::memory_resource* res)
+{
+    Image canvas_copy = canvas.clone(res);
+    for (auto smudge : smudges) {
+        smudge.apply(canvas_copy, target, brushes);
+    }
+
+    return canvas_copy.dist(target);
+}
+
 struct RankedSmudgePattern {
     SmudgePattern pattern{};
     float rank{};
@@ -61,6 +70,7 @@ RankedSmudgePattern rank(const SmudgePattern& pattern, const Image& target, Imag
 
     ranked.pattern = pattern;
     ranked.rank = dist(target, canvas, smudges, brushes);
+    //ranked.rank = unoptimized_dist(target, canvas, smudges, brushes, res);
 
     return ranked;
 }
