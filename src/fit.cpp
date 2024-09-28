@@ -48,7 +48,7 @@ float unoptimized_dist(const Image& target, const Image& canvas, const std::vect
         smudge.apply(canvas_copy, target, brushes);
     }
 
-    return canvas_copy.dist(target);
+    return canvas_copy.get_dist();
 }
 
 struct RankedSmudgePattern {
@@ -69,8 +69,8 @@ RankedSmudgePattern rank(const SmudgePattern& pattern, const Image& target, Imag
     const std::vector<Smudge> smudges = temp_smudges;
 
     ranked.pattern = pattern;
-    ranked.rank = dist(target, canvas, smudges, brushes);
-    //ranked.rank = unoptimized_dist(target, canvas, smudges, brushes, res);
+    //ranked.rank = dist(target, canvas, smudges, brushes);
+    ranked.rank = unoptimized_dist(target, canvas, smudges, brushes, res);
 
     return ranked;
 }

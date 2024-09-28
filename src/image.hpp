@@ -41,7 +41,7 @@ public:
     void set_pixel(size_t x, size_t y, Rgb color);
     Rgb get_pixel(size_t x, size_t y) const;
 
-    void blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha);
+    void blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha, bool is_update_dist);
 
     float dist(const Image& target) const;
 

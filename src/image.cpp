@@ -93,7 +93,7 @@ Rgb Image::get_pixel(size_t x, size_t y) const
     return color;
 }
 
-void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha)
+void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha, bool is_update_dist = true)
 {
     if (x >= m_width || y >= m_height) {
         return;
@@ -107,7 +107,9 @@ void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, floa
 
     set_pixel(x, y, Rgb(r, g, b));
 
-    m_cached_dist = dist(target);
+    if (is_update_dist) {
+        m_cached_dist = dist(target);
+    }
 }
 
 #if 1

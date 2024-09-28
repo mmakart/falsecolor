@@ -29,11 +29,12 @@ void Smudge::apply(Image& image, const Image& target, const std::vector<Brush>& 
 
     Rgb color = brushes[brush_index].color;
 
-    image.blend_pixel(target, x, y, color, 0.7f);
-    image.blend_pixel(target, x, y - 1, color, 0.5f);
-    image.blend_pixel(target, x, y + 1, color, 0.5f);
-    image.blend_pixel(target, x - 1, y, color, 0.5f);
-    image.blend_pixel(target, x + 1, y, color, 0.5f);
+    image.blend_pixel(target, x, y, color, 0.7f, false);
+    image.blend_pixel(target, x, y - 1, color, 0.5f, false);
+    image.blend_pixel(target, x, y + 1, color, 0.5f, false);
+    image.blend_pixel(target, x - 1, y, color, 0.5f, false);
+    image.blend_pixel(target, x + 1, y, color, 0.5f, false);
+    image.set_dist(image.dist(target));
 }
 
 SmudgePattern SmudgePattern::make_random(size_t width, size_t height, size_t brush_count)
