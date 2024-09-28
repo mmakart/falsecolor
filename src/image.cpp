@@ -76,7 +76,7 @@ Rgb Image::get_pixel(size_t x, size_t y) const
 
 void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha, bool is_update_dist = true)
 {
-    if (x >= m_width || y >= m_height) {
+    if (x < 0 || y < 0 || x >= m_width || y >= m_height) {
         return;
     }
 
