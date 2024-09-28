@@ -18,25 +18,6 @@ Rgb Rgb::hex(uint8_t r, uint8_t g, uint8_t b)
     return color;
 }
 
-
-float color_dist(const Rgb& c1, const Rgb& c2)
-{
-    float avg_r = 0.5f * (c1.r + c2.r);
-    float dr = c1.r - c2.r;
-    float dg = c1.g - c2.g;
-    float db = c1.b - c2.b;
-    float dr_sqr = dr * dr;
-    float dg_sqr = dg * dg;
-    float db_sqr = db * db;
-    float coef_r = 2.0f + avg_r;
-    float coef_g = 4.0f;
-    float coef_b = 2.0f - avg_r;
-    float dist_r = coef_r * dr_sqr;
-    float dist_g = coef_g * dg_sqr;
-    float dist_b = coef_b * db_sqr;
-    return dist_r * dist_r + dist_g * dist_g + dist_b * dist_b;
-}
-
 Rgb blend_pixels(const Rgb& base, const Rgb& c, float alpha)
 {
     float r = base.r * (1.0f - alpha) + c.r * alpha;
@@ -112,7 +93,6 @@ void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, floa
     }
 }
 
-#if 1
 float Image::dist(const Image& target) const
 {
     __m256 out = _mm256_setzero_ps();
@@ -170,48 +150,4 @@ float Image::dist(const Image& target) const
 
     return ds;
 }
-#else
-float Image::dist(const Image& other) const
-{
-    float d = 0.0f;
 
-    for (size_t i = 0; i < m_data_size; i += 3) {
-        float r1 = m_data[i];
-        float g1 = m_data[i + 1];
-        float b1 = m_data[i + 2];
-        float r2 = other.m_data[i];
-        float g2 = other.m_data[i + 1];
-        float b2 = other.m_data[i + 2];
-        float avg_r = (r1 + r2) / 2.0f;
-        float dr = fabs(r1 - r2);
-        float dg = fabs(g1 - g2);
-        float db = fabs(b1 - b2);
-        float coef_r = 2.0f + avg_r;
-        float coef_g = 4.0f;
-        float coef_b = 3.0f - avg_r;
-        float delta_r = coef_r * dr;
-        float delta_g = coef_g * dg;
-        float delta_b = coef_b * db;
-
-        d += r1 * r2 * pow(delta_r, 5) + g1 * g2 * pow(delta_g, 5) + b1 * b2 * pow(delta_b, 5);
-    }
-
-    return d;
-}
-#endif
-
-float Image::dist_diff(const Image& target, size_t x, size_t y, Rgb color, float alpha) const
-{
-    if (x < 0 || y < 0 || x >= m_width || y >= m_height) {
-        return 0.0f;
-    }
-
-    Rgb p1 = get_pixel(x, y);
-    Rgb p2 = target.get_pixel(x, y);
-
-    float prev_contribution = color_dist(p1, p2);
-    Rgb p1_changed = blend_pixels(p1, color, alpha);
-    float current_contribution = color_dist(p1_changed, p2);
-
-    return current_contribution - prev_contribution;
-}

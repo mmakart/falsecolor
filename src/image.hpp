@@ -45,8 +45,6 @@ public:
 
     float dist(const Image& target) const;
 
-    float dist_diff(const Image& target, size_t x, size_t y, Rgb color, float alpha) const;
-
     float get_dist() const {
         return m_cached_dist;
     }

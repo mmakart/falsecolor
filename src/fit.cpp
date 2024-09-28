@@ -4,44 +4,7 @@
 #include <algorithm>
 #include <immintrin.h>
 
-static inline __m256 mm256_abs_ps(__m256 x)
-{
-    return _mm256_andnot_ps(_mm256_set1_ps(-0.f), x);
-}
-
-static inline __m256 calc_dist(__m256 a, __m256 b)
-{
-    __m256 delta = mm256_abs_ps(_mm256_sub_ps(a, b));
-    __m256 abs_sq = _mm256_mul_ps(delta, delta);
-    __m256 dot_product = _mm256_mul_ps(a, b);
-    return _mm256_mul_ps(dot_product, _mm256_mul_ps(abs_sq, abs_sq));
-}
-
-float dist(const Image& target, Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes)
-{
-    if (canvas.get_dist() == -1.0f) {
-        canvas.set_dist(canvas.dist(target));
-    }
-
-    float distance = canvas.get_dist();
-
-    for (auto smudge : smudges) {
-        if (smudge.x < 0 || smudge.y < 0 || smudge.x >= canvas.width() || smudge.y >= canvas.height()) {
-            continue;
-        }
-
-        Rgb color = brushes[smudge.brush_index].color;
-        distance += canvas.dist_diff(target, smudge.x, smudge.y, color, 0.7f);
-        distance += canvas.dist_diff(target, smudge.x, smudge.y - 1, color, 0.5f);
-        distance += canvas.dist_diff(target, smudge.x, smudge.y + 1, color, 0.5f);
-        distance += canvas.dist_diff(target, smudge.x - 1, smudge.y, color, 0.5f);
-        distance += canvas.dist_diff(target, smudge.x + 1, smudge.y, color, 0.5f);
-    }
-
-    return distance;
-}
-
-float unoptimized_dist(const Image& target, const Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes, std::pmr::memory_resource* res)
+float dist(const Image& target, const Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes, std::pmr::memory_resource* res)
 {
     Image canvas_copy = canvas.clone(res);
     for (auto smudge : smudges) {
@@ -69,8 +32,7 @@ RankedSmudgePattern rank(const SmudgePattern& pattern, const Image& target, Imag
     const std::vector<Smudge> smudges = temp_smudges;
 
     ranked.pattern = pattern;
-    //ranked.rank = dist(target, canvas, smudges, brushes);
-    ranked.rank = unoptimized_dist(target, canvas, smudges, brushes, res);
+    ranked.rank = dist(target, canvas, smudges, brushes, res);
 
     return ranked;
 }
