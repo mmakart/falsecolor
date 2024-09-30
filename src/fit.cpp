@@ -40,6 +40,7 @@ RankedSmudgePattern rank(const SmudgePattern& pattern, const Image& target, Imag
 std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brush>& brushes)
 {
     Image canvas(target.width(), target.height(), std::pmr::get_default_resource());
+    Image sorted_canvas(canvas.width(), canvas.height(), std::pmr::get_default_resource());
 
     int steps = 256;
     int generations = 128;
@@ -49,6 +50,7 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
     int linear_chunks = 32;
 
     std::vector<Smudge> smudge_history;
+    std::vector<SmudgePattern> smudge_pattern_history;
 
     std::vector<RankedSmudgePattern> patterns(initial_smudges);
 
@@ -83,11 +85,38 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
 
         const auto& best_pattern = patterns[0].pattern;
 
+        smudge_pattern_history.push_back(best_pattern);
+
         smudge_history.push_back(best_pattern.smudge1);
         best_pattern.smudge1.apply(canvas, target, brushes);
         if (best_pattern.has_smudge2) {
             smudge_history.push_back(best_pattern.smudge2);
             best_pattern.smudge2.apply(canvas, target, brushes);
+        }
+
+        if (step % linear_chunks == linear_chunks - 1) {
+            const auto left_idx = step - (linear_chunks - 1);
+            const auto right_idx = left_idx + linear_chunks;
+
+            int last_smudges_count = 0;
+            for (auto j = left_idx; j < right_idx; j++) {
+                ++last_smudges_count;
+                if (smudge_pattern_history[j].has_smudge2) {
+                    ++last_smudges_count;
+                }
+            }
+
+            const auto& left = smudge_history.end() - last_smudges_count;
+            const auto& right = smudge_history.end();
+            std::sort(left, right, [](const Smudge& a, const Smudge& b) {
+                return a.y == b.y ? a.x < b.x : a.y < b.y;
+            });
+
+            std::for_each(left, right, [&](const Smudge& s) {
+                s.apply(sorted_canvas, target, brushes);
+            });
+
+            canvas = std::move(sorted_canvas.clone(&pool));
         }
     }
 
