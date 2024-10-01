@@ -23,35 +23,17 @@ class Image {
 public:
     Image(size_t width, size_t height, std::pmr::memory_resource* res);
 
+    Image(const Image& other, std::pmr::memory_resource* res);
+
+    Image(const Image&& other);
+
     Image clone(std::pmr::memory_resource* res) const;
-
-#if 0
-    Image(Image&& other)
-    {
-        m_width = other.m_width;
-        m_height = other.m_height;
-        m_data_size = other.m_data_size;
-        m_data = other.m_data;
-        m_cached_dist = other.m_cached_dist;
-        m_storage = std::move(other.m_storage);
-    }
-
-#else
-    Image(Image& other)
-    {
-        m_width = other.m_width;
-        m_height = other.m_height;
-        m_data_size = other.m_data_size;
-        m_data = other.m_data;
-        m_cached_dist = other.m_cached_dist;
-        m_storage = std::move(other.m_storage);
-    }
-#endif
 
 #if 0
     Image(const Image&) = delete;
     Image& operator=(const Image&) = delete;
 #endif
+    Image& operator=(const Image&);
 
     void set_pixel(size_t x, size_t y, Rgb color);
     Rgb get_pixel(size_t x, size_t y) const;

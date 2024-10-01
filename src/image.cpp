@@ -36,6 +36,39 @@ Image::Image(size_t width, size_t height, std::pmr::memory_resource* res)
     m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
 }
 
+Image::Image(const Image& other, std::pmr::memory_resource* res)
+    : m_width(other.m_width)
+    , m_height(other.m_height)
+    , m_data_size(other.m_data_size)
+    , m_storage(other.m_storage, res)
+    , m_cached_dist(other.m_cached_dist)
+{
+    m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
+}
+
+Image::Image(const Image&& other)
+{
+    m_width = other.m_width;
+    m_height = other.m_height;
+    m_data_size = other.m_data_size;
+    m_data = other.m_data;
+    m_cached_dist = other.m_cached_dist;
+    m_storage = std::move(other.m_storage);
+}
+
+Image& Image::operator=(const Image& other)
+{
+    m_width = other.m_width;
+    m_height = other.m_height;
+    m_data_size = other.m_data_size;
+    m_cached_dist = other.m_cached_dist;
+
+    m_storage = other.m_storage; // replace contents
+    m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
+
+    return *this;
+}
+
 Image Image::clone(std::pmr::memory_resource* res) const
 {
     Image im(m_width, m_height, res);

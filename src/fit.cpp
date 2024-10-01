@@ -116,7 +116,7 @@ std::vector<Smudge> fit_target_image(const Image& target, const std::vector<Brus
                 s.apply(sorted_canvas, target, brushes);
             });
 
-            canvas = std::move(sorted_canvas.clone(&pool));
+            canvas = sorted_canvas;
         }
     }
 
