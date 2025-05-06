@@ -17,9 +17,6 @@ endif()
 target_compile_features(falsecolor PRIVATE cxx_std_17)
 target_include_directories(falsecolor PRIVATE ${Python3_INCLUDE_DIRS} ${Python3_NumPy_INCLUDE_DIRS})
 target_link_libraries(falsecolor PRIVATE Python3::Module)
-if(NOT MSVC)
-    target_compile_options(falsecolor PUBLIC -mavx)
-endif()
 
 set_target_properties(falsecolor PROPERTIES
     PREFIX ""

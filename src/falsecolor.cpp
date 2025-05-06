@@ -5,7 +5,6 @@
 #include "random.hpp"
 #include "smudge.hpp"
 #include <Python.h>
-#include <immintrin.h>
 #include <memory_resource>
 #include <numpy/ndarrayobject.h>
 #include <vector>

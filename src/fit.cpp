@@ -2,7 +2,6 @@
 #include "image.hpp"
 #include "smudge.hpp"
 #include <algorithm>
-#include <immintrin.h>
 
 float dist(const Image& target, const Image& canvas, const std::vector<Smudge>& smudges, const std::vector<Brush>& brushes, std::pmr::memory_resource* res)
 {
