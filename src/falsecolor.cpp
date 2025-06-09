@@ -16,67 +16,92 @@
         return NULL;         \
     }
 
+template <typename DType>
+static void init_pixels(Image& im, const PyArrayObject *ndarray)
+{
+    size_t width = im.width();
+    size_t height = im.height();
+
+    for (size_t y = 0; y < height; y++) {
+        uint8_t* row = (uint8_t*)PyArray_DATA(ndarray) + y * PyArray_STRIDES(ndarray)[0];
+
+        for (size_t x = 0; x < width; x++) {
+            uint8_t r = row[PyArray_STRIDES(ndarray)[1] * x + 0 * PyArray_STRIDES(ndarray)[2]];
+            uint8_t g = row[PyArray_STRIDES(ndarray)[1] * x + 1 * PyArray_STRIDES(ndarray)[2]];
+            uint8_t b = row[PyArray_STRIDES(ndarray)[1] * x + 2 * PyArray_STRIDES(ndarray)[2]];
+
+            im.set_pixel<DType>(x, y, Rgb<DType>::hex(r, g, b));
+        }
+    }
+}
+
 static PyObject* fit(PyObject* self, PyObject* args)
 {
+    using DType = float;
+
     import_array();
 
-    PyObject* input;
+    PyObject* target_arg;
+    PyObject* canvas_arg;
+    double error_tolerance{};
 
-    if (!PyArg_ParseTuple(args, "O", &input)) {
+    if (!PyArg_ParseTuple(args, "OOd", &target_arg, &canvas_arg, &error_tolerance)) {
         return NULL;
     }
 
-    FC_PYCHECK(PyArray_Check(input));
+    FC_PYCHECK(PyArray_Check(target_arg));
+    FC_PYCHECK(PyArray_Check(canvas_arg));
 
-    PyArrayObject* input_array = ((PyArrayObject*)input);
+    PyArrayObject* target_ndarray = ((PyArrayObject*)target_arg);
+    PyArrayObject* canvas_ndarray = ((PyArrayObject*)canvas_arg);
 
     // Must be an RGB image without alpha
-    FC_PYCHECK(PyArray_DIM(input_array, 2) == 3);
-    FC_PYCHECK(PyArray_TYPE(input_array) == NPY_UINT8);
+    FC_PYCHECK(PyArray_DIM(target_ndarray, 2) == 3);
+    FC_PYCHECK(PyArray_TYPE(target_ndarray) == NPY_UINT8);
 
-    size_t width = PyArray_DIM(input_array, 0);
-    size_t height = PyArray_DIM(input_array, 1);
+    FC_PYCHECK(PyArray_DIM(canvas_ndarray, 2) == 3);
+    FC_PYCHECK(PyArray_TYPE(canvas_ndarray) == NPY_UINT8);
+
+    size_t width = PyArray_DIM(target_ndarray, 1);
+    size_t height = PyArray_DIM(target_ndarray, 0);
+
+    // Target and canvas must be of equal sizes
+    FC_PYCHECK(PyArray_DIM(canvas_ndarray, 1) == width);
+    FC_PYCHECK(PyArray_DIM(canvas_ndarray, 0) == height);
 
     Image target(width, height, std::pmr::get_default_resource());
+    Image canvas(width, height, std::pmr::get_default_resource());
 
-    for (size_t y = 0; y < height; y++) {
-        uint8_t* row = (uint8_t*)PyArray_DATA(input_array) + y * PyArray_STRIDES(input_array)[0];
+    init_pixels<DType>(target, target_ndarray);
+    init_pixels<DType>(canvas, canvas_ndarray);
 
-        for (size_t x = 0; x < width; x++) {
-            uint8_t r = row[PyArray_STRIDES(input_array)[1] * x + 0 * PyArray_STRIDES(input_array)[2]];
-            uint8_t g = row[PyArray_STRIDES(input_array)[1] * x + 1 * PyArray_STRIDES(input_array)[2]];
-            uint8_t b = row[PyArray_STRIDES(input_array)[1] * x + 2 * PyArray_STRIDES(input_array)[2]];
-
-            target.set_pixel(x, y, Rgb::hex(r, g, b));
-        }
-    }
-
-    std::vector<Brush> brushes = {
-        {"White", Rgb::hex(0xff, 0xff, 0xff)},
-        {"Yellow", Rgb::hex(0xff, 0xf0, 0x00)},
-        {"Orange", Rgb::hex(0xff, 0x6c, 0x00)},
-        {"Red", Rgb::hex(0xff, 0x00, 0x00)},
-        {"Violet", Rgb::hex(0x8a, 0x00, 0xff)},
-        {"Blue", Rgb::hex(0x00, 0x0c, 0xff)},
-        {"Green", Rgb::hex(0x0c, 0xff, 0x00)},
-        {"Magenta", Rgb::hex(0xfc, 0x00, 0xff)},
-        {"Cyan", Rgb::hex(0x00, 0xff, 0xea)},
-        {"Grey", Rgb::hex(0xbe, 0xbe, 0xbe)},
-        {"DarkGrey", Rgb::hex(0x7b, 0x7b, 0x7b)},
-        {"Black", Rgb::hex(0x00, 0x00, 0x00)},
-        {"DarkGreen", Rgb::hex(0x00, 0x64, 0x00)},
-        {"Brown", Rgb::hex(0x96, 0x4b, 0x00)},
-        {"Pink", Rgb::hex(0xff, 0xc0, 0xcb)},
+    // TODO: make customizable
+    const std::vector<SmudgeProperties<DType>> allowed_types {
+        PredefinedBrushes::pixel_props,
+        PredefinedBrushes::water_props,
+        PredefinedBrushes::oil_props,
     };
 
-    auto steps = fit_target_image(target, brushes);
+    auto steps = fit_target_image<DType>(target, canvas, error_tolerance, allowed_types);
 
     PyObject* list = PyList_New(steps.size());
 
     for (size_t i = 0; i < steps.size(); i++) {
-        auto name = brushes[steps[i].brush_index].name;
+        const auto x{steps[i].x};
+        const auto y{steps[i].y};
+        const auto name{PredefinedBrushes::all_colors[steps[i].color_idx].name};
+        const auto type{PredefinedBrushes::all_types[steps[i].type_idx].type};
 
-        PyObject* tuple = Py_BuildValue("(iis#)", int(steps[i].x), int(steps[i].y), name.data(), Py_ssize_t(name.size()));
+        PyObject* tuple = Py_BuildValue(
+                "(iis#s#)",
+                x,
+                y,
+                name.data(),
+                name.length(),
+                type.data(),
+                type.length()
+        );
+
         PyList_SetItem(list, i, tuple);
     }
 

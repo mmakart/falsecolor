@@ -5,9 +5,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter Development NumPy)
 
 add_library(falsecolor SHARED
     ${CMAKE_CURRENT_LIST_DIR}/src/falsecolor.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/src/fit.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/image.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/src/smudge.cpp
 )
 
 if(NOT Python3_NumPy_FOUND)

@@ -5,25 +5,6 @@
 #define MAKE_ALIGNED_POINTER(pointer, alignment) \
     ((uintptr_t)(pointer) + (alignment - 1) & ~(uintptr_t)(alignment - 1))
 
-Rgb Rgb::hex(uint8_t r, uint8_t g, uint8_t b)
-{
-    Rgb color;
-
-    color.r = float(r) / 255.0f;
-    color.g = float(g) / 255.0f;
-    color.b = float(b) / 255.0f;
-
-    return color;
-}
-
-Rgb blend_pixels(const Rgb& base, const Rgb& c, float alpha)
-{
-    float r = base.r * (1.0f - alpha) + c.r * alpha;
-    float g = base.g * (1.0f - alpha) + c.g * alpha;
-    float b = base.b * (1.0f - alpha) + c.b * alpha;
-    return Rgb(r, g, b);
-}
-
 Image::Image(size_t width, size_t height, std::pmr::memory_resource* res)
     : m_width(width)
     , m_height(height)
@@ -41,55 +22,6 @@ Image Image::clone(std::pmr::memory_resource* res) const
 
     return im;
 };
-
-void Image::set_pixel(size_t x, size_t y, Rgb color)
-{
-    if (x >= m_width || y >= m_height) {
-        return;
-    }
-
-    size_t offset = 3 * (m_width * y + x);
-
-    m_data[offset] = color.r;
-    m_data[offset + 1] = color.g;
-    m_data[offset + 2] = color.b;
-}
-
-Rgb Image::get_pixel(size_t x, size_t y) const
-{
-    if (x >= m_width || y >= m_height) {
-        return Rgb{255, 255, 255};
-    }
-
-    size_t offset = 3 * (m_width * y + x);
-
-    Rgb color;
-
-    color.r = m_data[offset];
-    color.g = m_data[offset + 1];
-    color.b = m_data[offset + 2];
-
-    return color;
-}
-
-void Image::blend_pixel(const Image& target, size_t x, size_t y, Rgb color, float alpha, bool is_update_dist = true)
-{
-    if (x < 0 || y < 0 || x >= m_width || y >= m_height) {
-        return;
-    }
-
-    Rgb dst = get_pixel(x, y);
-
-    float r = dst.r * (1.0f - alpha) + color.r * alpha;
-    float g = dst.g * (1.0f - alpha) + color.g * alpha;
-    float b = dst.b * (1.0f - alpha) + color.b * alpha;
-
-    set_pixel(x, y, Rgb(r, g, b));
-
-    if (is_update_dist) {
-        m_cached_dist = dist(target);
-    }
-}
 
 float Image::dist(const Image& target) const
 {

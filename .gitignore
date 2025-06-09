@@ -6,3 +6,5 @@
 *.manifest
 *.so
 *.pdb
+build/
+debug_build/
