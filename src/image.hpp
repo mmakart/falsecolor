@@ -99,7 +99,7 @@ public:
         float g = dst.g * (1.0f - alpha) + static_cast<float>(color.g) * alpha;
         float b = dst.b * (1.0f - alpha) + static_cast<float>(color.b) * alpha;
 
-        set_pixel(x, y, Rgb<DType>{r, g, b});
+        set_pixel(x, y, Rgb<float>{r, g, b});
     }
 
     float dist(const Image& target) const;

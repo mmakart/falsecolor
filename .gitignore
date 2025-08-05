@@ -8,3 +8,5 @@
 *.pdb
 build/
 debug_build/
+Debug/
+instructions.txt

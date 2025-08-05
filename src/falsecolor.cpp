@@ -17,7 +17,7 @@
     }
 
 template <typename DType>
-static void init_pixels(Image& im, const PyArrayObject *ndarray)
+static void init_pixels(Image& im, PyArrayObject *ndarray)
 {
     size_t width = im.width();
     size_t height = im.height();

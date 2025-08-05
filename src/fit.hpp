@@ -6,7 +6,6 @@
 #include <cmath> // std::abs(long)
 #include <numeric>
 #include <vector>
-#include <random> //TODO temp?
 #include <iostream> //TODO temp
 
 template <typename DType = float> // double is also possible
@@ -41,7 +40,7 @@ struct ReversedGreedyFitter {
         {
             static_assert(std::is_same_v<T, Rgb<DType>> == true);
 
-            for (Signed y = 0; y < m_width; ++y) {
+            for (Signed y = 0; y < m_height; ++y) {
                 for (Signed x = 0; x < m_width; ++x) {
                     (*this)(x, y) = im.get_pixel<DType>(x, y);
                 }
@@ -72,11 +71,11 @@ struct ReversedGreedyFitter {
             return m_data.cend();
         }
 
-        Signed width() {
+        Signed width() const {
             return m_width;
         }
 
-        Signed height() {
+        Signed height() const {
             return m_height;
         }
 
@@ -99,14 +98,16 @@ struct ReversedGreedyFitter {
                 PredefinedBrushes::num_colors * PredefinedBrushes::num_types
         };
 
-        static constexpr size_t s_acc_alpha_size{PredefinedBrushes::num_types};
+        static constexpr size_t s_threshold_count_size {
+                PredefinedBrushes::num_types
+        };
 
         // Not std::vector because it would acquire random memory
         // from the heap which would hurt memory locality and drop performance.
         std::array<DType, s_alphas_size> errors_per_alpha{};
         std::array<DType, s_types_size> errors_per_brush_type{};
         std::array<DType, s_distances_size> distances_per_brush_type{};
-        std::array<int, s_acc_alpha_size> threshold_count_per_brush_type{};
+        std::array<int, s_threshold_count_size> threshold_count_per_brush_type{};
 
         // If "steal" pixel from in-game canvas.
         // It allows to avoid applying unnecessary smudges where canvas pixels
@@ -117,6 +118,7 @@ struct ReversedGreedyFitter {
         DType error_if_take_from_canvas{};
     };
 
+private:
     // Image RGB data of in-game canvas (e.g. blank or partially finished one)
     const Array2D<Rgb<DType>> m_canvas;
 
@@ -141,8 +143,9 @@ struct ReversedGreedyFitter {
     // Precalculated data to pick a next smudge by custom rank
     Array2D<PixelStats> m_stats;
 
-    DType m_threshold_alpha{};
+    const DType m_threshold_alpha{};
 
+public:
     ReversedGreedyFitter(const Image& target,
             const Image& canvas, DType error_tolerance)
         : m_canvas(canvas)
@@ -157,6 +160,7 @@ struct ReversedGreedyFitter {
         init_pixel_stats();
     }
 
+private:
     void init_pixel_stats() {
         using PredefinedBrushes::num_colors, PredefinedBrushes::num_alphas,
                 PredefinedBrushes::num_types, PredefinedBrushes::premul,
@@ -201,7 +205,6 @@ struct ReversedGreedyFitter {
                             sum += color_dist(
                                     m_rev_canvas(new_x, new_y),
                                     all_colors[color_idx].color
-//                            ); //TODO
                             ) * m_acc_alphas(new_x, new_y);
                         }
 
@@ -405,7 +408,6 @@ struct ReversedGreedyFitter {
                             sum += color_dist(
                                     m_rev_canvas(new_x, new_y),
                                     all_colors[color_idx].color
-//                            ); //TODO
                             ) * m_acc_alphas(new_x, new_y);
                         }
 
@@ -468,20 +470,18 @@ struct ReversedGreedyFitter {
         }
     }
 
+public:
     std::vector<Smudge<DType>> fit() {
         std::vector<Smudge<DType>> result;
 
         int sum_threshold_alpha{};
 
         //TODO temp
-        std::mt19937 rg{std::random_device{}()};
-
-        //TODO temp
         struct Coord { Signed x, y; };
         std::vector<Coord> coords(m_stats.width() * m_stats.height());
         std::vector<size_t> color_idxs(PredefinedBrushes::num_colors);
-        //std::vector<size_t> type_idxs(3); //TODO temp
-        std::vector<size_t> type_idxs{1};
+        std::vector<size_t> type_idxs(3); //TODO temp
+        //std::vector<size_t> type_idxs{1};
 
         std::generate(coords.begin(), coords.end(), [&, xx=0, yy=0] () mutable {
                     if (xx == m_stats.width()) { xx = 0; ++yy; }
@@ -491,7 +491,7 @@ struct ReversedGreedyFitter {
                 }
         );
         std::iota(color_idxs.begin(), color_idxs.end(), 0);
-        //std::iota(type_idxs.begin(), type_idxs.end(), 0); //TODO temp
+        std::iota(type_idxs.begin(), type_idxs.end(), 0); //TODO temp
 
         while (true) {
             Signed best_x{0}, best_y{0};
@@ -507,10 +507,6 @@ struct ReversedGreedyFitter {
             if (sum_threshold_alpha == 0) {
                 break;
             }
-            //TODO temp
-            //std::shuffle(coords.begin(), coords.end(), rg);
-            //std::shuffle(color_idxs.begin(), color_idxs.end(), rg);
-            //std::shuffle(type_idxs.begin(), type_idxs.end(), rg);
 
             for (const auto& coord : coords) {
                 Signed x = coord.x;
@@ -551,13 +547,13 @@ struct ReversedGreedyFitter {
             reverse_apply_smudge(best_smudge);
 
             result.push_back(best_smudge);
-
-            //std::cerr << "Abs error = " << std::accumulate(m_abs_errors.begin(), m_abs_errors.end(), 0.0) << '\n'; //TODO remove
         }
+
+        std::reverse(result.begin(), result.end()); // Important
 
         std::cerr << "Total error = " << std::accumulate(m_abs_errors.cbegin(),
                 m_abs_errors.cend(), 0.0) << '\n';
-        std::cerr << "1 pixel count = " << std::count_if(result.cbegin(), result.cend(),
+        std::cerr << "1 pixel brush count = " << std::count_if(result.cbegin(), result.cend(),
                 [](const auto& smudge) {
                     return smudge.type_idx == 0;
                 }) << '\n';
@@ -570,8 +566,6 @@ struct ReversedGreedyFitter {
                     return smudge.type_idx == 2;
                 }) << '\n';
         std::cerr << "Total smudges = " << std::size(result) << '\n';
-
-        std::reverse(result.begin(), result.end());
 
         return result;
     }

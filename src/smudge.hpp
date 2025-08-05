@@ -2,6 +2,7 @@
 
 #include "image.hpp"
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <string_view>
@@ -32,14 +33,15 @@ namespace PredefinedBrushes {
     using DType = float;
 //    using DType = Settings::DType; // TODO add a single source of information?
 
-    enum BrushType {
+    enum BrushType : size_t { // For indexing
         pixel, water, oil, num_types
     };
 
-    enum Alpha {
+    enum Alpha : size_t { // For indexing
         a0_5, a0_7, a0_9, a1_0, num_alphas
     };
 
+    // Same order as in enum Alpha!
     inline constexpr std::array<DType, num_alphas> all_alphas {
             0.5, 0.7, 0.9, 1.0
     };
@@ -114,7 +116,7 @@ namespace PredefinedBrushes {
 
 template <typename DType>
 struct Smudge {
-    using Signed = ptrdiff_t; // TODO remove this line?
+    using Signed = ptrdiff_t;
 
     Signed x{};
     Signed y{};
@@ -123,7 +125,8 @@ struct Smudge {
 
     void apply(Image& image) const
     {
-        if (x >= image.width() || y >= image.height()) {
+        if (x < 0 || static_cast<size_t>(x) >= image.width() ||
+                y < 0 || static_cast<size_t>(y) >= image.height()) {
             return;
         }
 
@@ -157,7 +160,6 @@ inline DType channel_error_from_reversed_blend(
         DType alpha,
         DType acc_alpha)
 {
-    //TODO remove static_casts?
     if (alpha == 1) {
         return (source_premul - result) * acc_alpha;
     }
