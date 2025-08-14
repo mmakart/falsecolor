@@ -77,9 +77,9 @@ static PyObject* fit(PyObject* self, PyObject* args)
 
     // TODO: make customizable
     const std::vector<SmudgeProperties<DType>> allowed_types {
-        PredefinedBrushes::pixel_props,
-        PredefinedBrushes::water_props,
-        PredefinedBrushes::oil_props,
+            PredefinedBrushes::pixel_props,
+            PredefinedBrushes::water_props,
+            PredefinedBrushes::oil_props,
     };
 
     auto steps = fit_target_image<DType>(target, canvas, error_tolerance, allowed_types);

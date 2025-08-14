@@ -6,7 +6,12 @@
 *.manifest
 *.so
 *.pdb
+
 build/
 debug_build/
 Debug/
 instructions.txt
+
+# vim
+tags
+*.swp

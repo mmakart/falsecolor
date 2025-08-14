@@ -12,6 +12,105 @@ template <typename DType = float> // double is also possible
 struct ReversedGreedyFitter {
     using Signed = ptrdiff_t; // To avoid unsigned-signed indexing bugs
 
+    ReversedGreedyFitter(const Image& target,
+            const Image& canvas, DType error_tolerance)
+        : m_canvas(canvas)
+        , m_target(target)
+        , m_rev_canvas(target)
+        , m_errors(target.width(), target.height(), {0, 0, 0})
+        , m_abs_errors(target.width(), target.height(), 0)
+        , m_acc_alphas(target.width(), target.height(), 1)
+        , m_stats(target.width(), target.height())
+        , m_threshold_alpha{error_tolerance}
+    {
+        init_pixel_stats();
+    }
+
+    std::vector<Smudge<DType>> fit() {
+        std::vector<Smudge<DType>> result;
+
+        int sum_threshold_alpha{};
+
+        //TODO temp
+        struct Coord { Signed x, y; };
+        std::vector<Coord> coords(m_stats.width() * m_stats.height());
+        std::vector<size_t> color_idxs(PredefinedBrushes::num_colors);
+        std::vector<size_t> type_idxs(3); //TODO temp
+        //std::vector<size_t> type_idxs{1};
+
+        std::generate(coords.begin(), coords.end(), [&, xx=0, yy=0] () mutable {
+                    if (xx == m_stats.width()) { xx = 0; ++yy; }
+                    Coord res{xx, yy};
+                    ++xx;
+                    return res;
+                }
+        );
+        std::iota(color_idxs.begin(), color_idxs.end(), 0);
+        std::iota(type_idxs.begin(), type_idxs.end(), 0); //TODO temp
+
+        while (true) {
+            Signed best_x{0}, best_y{0};
+            size_t best_type_idx{}, best_color_idx{};
+            DType best_error{1000000}, best_distance{1000000};
+
+            sum_threshold_alpha = std::count_if(m_acc_alphas.cbegin(), m_acc_alphas.cend(),
+                    [&](const auto& el) {
+                        return el > m_threshold_alpha;
+                    }
+            );
+
+            if (sum_threshold_alpha == 0) {
+                break;
+            }
+
+            for (const auto& coord : coords) {
+                Signed x = coord.x;
+                Signed y = coord.y;
+                for (size_t type_idx : type_idxs) {
+                    const bool enough_acc_alpha {
+                        m_stats(x, y).threshold_count_per_brush_type[type_idx] > 0
+                    };
+
+                    if (!enough_acc_alpha) {
+                        continue;
+                    }
+
+                    for (size_t color_idx : color_idxs) {
+                        using PredefinedBrushes::num_colors, PredefinedBrushes::num_types;
+
+                        const size_t index{num_types * color_idx + type_idx};
+
+                        const DType error = m_stats(x, y).errors_per_brush_type[index];
+                        const DType distance = m_stats(x, y).distances_per_brush_type[index];
+
+                        if (error < best_error
+                                || error == best_error && distance < best_distance) {
+                            best_error = error;
+                            best_distance = distance;
+
+                            best_x = x;
+                            best_y = y;
+                            best_type_idx = type_idx;
+                            best_color_idx = color_idx;
+                        }
+                    }
+                }
+            }
+
+            Smudge<DType> best_smudge{best_x, best_y, best_type_idx, best_color_idx};
+
+            reverse_apply_smudge(best_smudge);
+
+            result.push_back(best_smudge);
+        }
+
+        std::reverse(result.begin(), result.end()); // Important
+
+        print_statistics(result);
+
+        return result;
+    }
+
     template <typename T>
     class Array2D {
     public:
@@ -117,48 +216,6 @@ struct ReversedGreedyFitter {
         // again.
         DType error_if_take_from_canvas{};
     };
-
-private:
-    // Image RGB data of in-game canvas (e.g. blank or partially finished one)
-    const Array2D<Rgb<DType>> m_canvas;
-
-    const Array2D<Rgb<DType>> m_target;
-
-    Array2D<Rgb<DType>> m_rev_canvas;
-
-    // Inavoidable errors per pixel (per channel). Initially is 0 everywhere.
-    // Can reach down to -1 or up to 1 during calculations in extreme cases.
-    // The closer to 0, the better.
-    Array2D<Rgb<DType>> m_errors;
-
-    // Grayscale variation of m_errors (e.g. euclidean RGB distance)
-    Array2D<DType> m_abs_errors;
-
-    // Initially is 1 everywhere. Geometrically drops to 0 on each reversed
-    // applyment of a smudge (the more alpha a smudge has the more it drops).
-    // Reflects how much next reversed smudge can affect resulting color
-    // or add error.
-    Array2D<DType> m_acc_alphas;
-
-    // Precalculated data to pick a next smudge by custom rank
-    Array2D<PixelStats> m_stats;
-
-    const DType m_threshold_alpha{};
-
-public:
-    ReversedGreedyFitter(const Image& target,
-            const Image& canvas, DType error_tolerance)
-        : m_canvas(canvas)
-        , m_target(target)
-        , m_rev_canvas(target)
-        , m_errors(target.width(), target.height(), {0, 0, 0})
-        , m_abs_errors(target.width(), target.height(), 0)
-        , m_acc_alphas(target.width(), target.height(), 1)
-        , m_stats(target.width(), target.height())
-        , m_threshold_alpha{error_tolerance}
-    {
-        init_pixel_stats();
-    }
 
 private:
     void init_pixel_stats() {
@@ -470,90 +527,11 @@ private:
         }
     }
 
-public:
-    std::vector<Smudge<DType>> fit() {
-        std::vector<Smudge<DType>> result;
-
-        int sum_threshold_alpha{};
-
-        //TODO temp
-        struct Coord { Signed x, y; };
-        std::vector<Coord> coords(m_stats.width() * m_stats.height());
-        std::vector<size_t> color_idxs(PredefinedBrushes::num_colors);
-        std::vector<size_t> type_idxs(3); //TODO temp
-        //std::vector<size_t> type_idxs{1};
-
-        std::generate(coords.begin(), coords.end(), [&, xx=0, yy=0] () mutable {
-                    if (xx == m_stats.width()) { xx = 0; ++yy; }
-                    Coord res{xx, yy};
-                    ++xx;
-                    return res;
-                }
-        );
-        std::iota(color_idxs.begin(), color_idxs.end(), 0);
-        std::iota(type_idxs.begin(), type_idxs.end(), 0); //TODO temp
-
-        while (true) {
-            Signed best_x{0}, best_y{0};
-            size_t best_type_idx{}, best_color_idx{};
-            DType best_error{1000000}, best_distance{1000000};
-
-            sum_threshold_alpha = std::count_if(m_acc_alphas.cbegin(), m_acc_alphas.cend(),
-                    [&](const auto& el) {
-                        return el > m_threshold_alpha;
-                    }
-            );
-
-            if (sum_threshold_alpha == 0) {
-                break;
-            }
-
-            for (const auto& coord : coords) {
-                Signed x = coord.x;
-                Signed y = coord.y;
-                for (size_t type_idx : type_idxs) {
-                    const bool enough_acc_alpha {
-                        m_stats(x, y).threshold_count_per_brush_type[type_idx] > 0
-                    };
-
-                    if (!enough_acc_alpha) {
-                        continue;
-                    }
-
-                    for (size_t color_idx : color_idxs) {
-                        using PredefinedBrushes::num_colors, PredefinedBrushes::num_types;
-
-                        const size_t index{num_types * color_idx + type_idx};
-
-                        const DType error = m_stats(x, y).errors_per_brush_type[index];
-                        const DType distance = m_stats(x, y).distances_per_brush_type[index];
-
-                        if (error < best_error
-                                || error == best_error && distance < best_distance) {
-                            best_error = error;
-                            best_distance = distance;
-
-                            best_x = x;
-                            best_y = y;
-                            best_type_idx = type_idx;
-                            best_color_idx = color_idx;
-                        }
-                    }
-                }
-            }
-
-            Smudge<DType> best_smudge{best_x, best_y, best_type_idx, best_color_idx};
-
-            reverse_apply_smudge(best_smudge);
-
-            result.push_back(best_smudge);
-        }
-
-        std::reverse(result.begin(), result.end()); // Important
-
+    void print_statistics(const std::vector<Smudge<DType>>& result) {
         std::cerr << "Total error = " << std::accumulate(m_abs_errors.cbegin(),
                 m_abs_errors.cend(), 0.0) << '\n';
-        std::cerr << "1 pixel brush count = " << std::count_if(result.cbegin(), result.cend(),
+        std::cerr << "1 pixel brush count = "
+                << std::count_if(result.cbegin(), result.cend(),
                 [](const auto& smudge) {
                     return smudge.type_idx == 0;
                 }) << '\n';
@@ -566,9 +544,33 @@ public:
                     return smudge.type_idx == 2;
                 }) << '\n';
         std::cerr << "Total smudges = " << std::size(result) << '\n';
-
-        return result;
     }
+
+    // Image RGB data of in-game canvas (e.g. blank or partially finished one)
+    const Array2D<Rgb<DType>> m_canvas;
+
+    const Array2D<Rgb<DType>> m_target;
+
+    Array2D<Rgb<DType>> m_rev_canvas;
+
+    // Inavoidable errors per pixel (per channel). Initially is 0 everywhere.
+    // Can reach down to -1 or up to 1 during calculations in extreme cases.
+    // The closer to 0, the better.
+    Array2D<Rgb<DType>> m_errors;
+
+    // Grayscale variation of m_errors (e.g. euclidean RGB distance)
+    Array2D<DType> m_abs_errors;
+
+    // Initially is 1 everywhere. Geometrically drops to 0 on each reversed
+    // applyment of a smudge (the more alpha a smudge has the more it drops).
+    // Reflects how much next reversed smudge can affect resulting color
+    // or add error.
+    Array2D<DType> m_acc_alphas;
+
+    // Precalculated data to pick a next smudge by custom rank
+    Array2D<PixelStats> m_stats;
+
+    const DType m_threshold_alpha{};
 };
 
 // Gives a list of smudges (x, y, color, type) which, applied in this order,

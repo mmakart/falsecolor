@@ -104,14 +104,6 @@ public:
 
     float dist(const Image& target) const;
 
-    float get_dist() const {
-        return m_cached_dist;
-    }
-
-    void set_dist(float dist) {
-        m_cached_dist = dist;
-    }
-
     size_t width() const
     {
         return m_width;
@@ -128,5 +120,4 @@ private:
     size_t m_data_size{};
     size_t m_width{};
     size_t m_height{};
-    float m_cached_dist{};
 };

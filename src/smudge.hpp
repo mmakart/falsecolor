@@ -153,6 +153,10 @@ struct RankedSmudge {
     DType error{};
 };
 
+// Standard alpha blending formula: R = (1 - A) * D + A * S
+// or R = (1 - A) * D + S_premul.
+// Possible return value is in range [-1; 1].
+// result and source_premul are expected to be in range [-1; 1].
 template <typename DType>
 inline DType channel_error_from_reversed_blend(
         DType result,
@@ -198,7 +202,7 @@ inline Rgb<DType> error_from_reversed_blend(
 
 template <typename DType>
 inline DType rgb_to_distance(const Rgb<DType>& diff) {
-    return std::sqrt(diff.r * diff.r + diff.g * diff.g + diff.b * diff.b);
+    return std::hypot(diff.r, diff.g, diff.b);
 }
 
 template <typename DType>
@@ -208,6 +212,11 @@ inline DType color_dist(const Rgb<DType>& c1, const Rgb<DType>& c2) {
     return rgb_to_distance(diff);
 }
 
+// Standard alpha blending formula: R = (1 - A) * D + A * S
+// or R = (1 - A) * D + S_premul.
+// Here it is ised thus:
+// D = (R - S_premul) / (1 - A).
+// R is result, D is destination, S is source, A is alpha.
 template <typename DType>
 inline DType reverse_blend_channel(DType result, DType source_premul, DType alpha) {
     return alpha == 1
