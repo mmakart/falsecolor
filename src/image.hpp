@@ -47,7 +47,6 @@ public:
         m_height = other.m_height;
         m_data_size = other.m_data_size;
         m_data = other.m_data;
-        m_cached_dist = other.m_cached_dist;
         m_storage = std::move(other.m_storage);
     }
 

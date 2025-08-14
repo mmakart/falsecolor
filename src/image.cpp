@@ -10,7 +10,6 @@ Image::Image(size_t width, size_t height, std::pmr::memory_resource* res)
     , m_height(height)
     , m_data_size(width * height * 3)
     , m_storage(width * height * 3 + 32, 1.0f, res)
-    , m_cached_dist(-1.0f) // default value means not yet calculated distance
 {
     m_data = (float*)MAKE_ALIGNED_POINTER(m_storage.data(), 32);
 }

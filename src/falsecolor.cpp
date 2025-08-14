@@ -3,6 +3,7 @@
 #include "fit.hpp"
 #include "image.hpp"
 #include "random.hpp"
+#include "settings.hpp"
 #include "smudge.hpp"
 #include <Python.h>
 #include <memory_resource>
@@ -37,8 +38,6 @@ static void init_pixels(Image& im, PyArrayObject *ndarray)
 
 static PyObject* fit(PyObject* self, PyObject* args)
 {
-    using DType = float;
-
     import_array();
 
     PyObject* target_arg;
@@ -76,13 +75,13 @@ static PyObject* fit(PyObject* self, PyObject* args)
     init_pixels<DType>(canvas, canvas_ndarray);
 
     // TODO: make customizable
-    const std::vector<SmudgeProperties<DType>> allowed_types {
-            PredefinedBrushes::pixel_props,
-            PredefinedBrushes::water_props,
-            PredefinedBrushes::oil_props,
+    const std::vector<size_t> allowed_brush_types {
+            0, // 1 pixel
+            1, // water
+            2, // oil
     };
 
-    auto steps = fit_target_image<DType>(target, canvas, error_tolerance, allowed_types);
+    auto steps = fit_target_image<DType>(target, canvas, error_tolerance, allowed_brush_types);
 
     PyObject* list = PyList_New(steps.size());
 

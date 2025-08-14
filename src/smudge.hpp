@@ -1,6 +1,7 @@
 #pragma once
 
 #include "image.hpp"
+#include "settings.hpp"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -15,8 +16,6 @@ struct Brush {
 
 template <typename DType> // float or double
 struct SmudgeProperties {
-    using Signed = ptrdiff_t;
-
     static constexpr size_t max_pixels{5};
 
     size_t num_pixels;
@@ -30,9 +29,6 @@ struct SmudgeProperties {
 };
 
 namespace PredefinedBrushes {
-    using DType = float;
-//    using DType = Settings::DType; // TODO add a single source of information?
-
     enum BrushType : size_t { // For indexing
         pixel, water, oil, num_types
     };
@@ -88,18 +84,15 @@ namespace PredefinedBrushes {
             {"o"}
     };
 
-    inline constexpr size_t num_premul{num_colors * num_alphas};
-
-    inline constexpr std::array<Rgb<DType>, num_premul> init_premul() {
-        std::array<Rgb<DType>, num_premul> result{};
+    inline constexpr Array2DConstDim<Rgb<DType>, num_alphas, num_colors> init_premul() {
+        Array2DConstDim<Rgb<DType>, num_alphas, num_colors> result{};
 
         for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
             for (size_t alpha_idx = 0; alpha_idx < num_alphas; ++alpha_idx) {
                 auto color = all_colors[color_idx].color;
                 auto alpha = all_alphas[alpha_idx];
 
-                const size_t index{color_idx * num_alphas + alpha_idx};
-                result[index] = {
+                result(alpha_idx, color_idx) = {
                         color.r * alpha, color.g * alpha, color.b * alpha
                 };
             }
@@ -108,7 +101,7 @@ namespace PredefinedBrushes {
         return result;
     }
 
-    inline constexpr std::array<Rgb<DType>, num_premul> premul{init_premul()};
+    inline constexpr Array2DConstDim<Rgb<DType>, num_alphas, num_colors> premul{init_premul()};
 
     // Same order as in enum BrushType!
     inline constexpr std::array all_types{pixel_props, water_props, oil_props};
@@ -116,8 +109,6 @@ namespace PredefinedBrushes {
 
 template <typename DType>
 struct Smudge {
-    using Signed = ptrdiff_t;
-
     Signed x{};
     Signed y{};
     size_t type_idx{};
@@ -214,7 +205,7 @@ inline DType color_dist(const Rgb<DType>& c1, const Rgb<DType>& c2) {
 
 // Standard alpha blending formula: R = (1 - A) * D + A * S
 // or R = (1 - A) * D + S_premul.
-// Here it is ised thus:
+// Here it is transformed thus:
 // D = (R - S_premul) / (1 - A).
 // R is result, D is destination, S is source, A is alpha.
 template <typename DType>
