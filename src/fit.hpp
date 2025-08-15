@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath> // std::abs(long)
 #include <numeric>
+#include <utility>
 #include <vector>
 #include <iostream> //TODO temp
 
@@ -139,23 +140,19 @@ private:
 
     template <typename Func>
     void for_smudge_pixels(const Smudge<DType>& smudge, Func func) {
-        using PredefinedBrushes::all_types, PredefinedBrushes::premul;
+        using PredefinedBrushes::premul;
 
-        const SmudgeProperties<DType>& props{all_types[smudge.type_idx]};
+        const size_t color_idx{smudge.color_idx};
 
-        for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
-            const Signed x{smudge.x + props.xs[coord_idx]};
-            const Signed y{smudge.y + props.ys[coord_idx]};
+        for(const auto [dx, dy, alpha, alpha_idx] : smudge.pixels_data()) {
+            const auto [x, y] = std::pair{smudge.x + dx, smudge.y + dy};
 
             if (y < 0 || y >= m_stats.height() ||
                     x < 0 || x >= m_stats.width()) {
                 continue;
             }
 
-            const size_t alpha_idx{props.alphas_idxs[coord_idx]};
-            const size_t color_idx{smudge.color_idx};
             const Rgb<DType>& color_premul{premul(alpha_idx, color_idx)};
-            const DType alpha{props.alphas[coord_idx]};
 
             func(x, y, color_premul, alpha);
         }

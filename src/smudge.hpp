@@ -133,6 +133,24 @@ struct Smudge {
             );
         }
     }
+
+    // TODO: replace vector to avoid heap allocations
+    constexpr std::vector<std::tuple<Signed, Signed, DType, size_t>> pixels_data() const {
+        const auto& props{PredefinedBrushes::all_types[type_idx]};
+
+        std::vector<std::tuple<Signed, Signed, DType, size_t>> result(props.num_pixels);
+
+        for (size_t i = 0; i < props.num_pixels; ++i) {
+            result[i] = {
+                    props.xs[i],
+                    props.ys[i],
+                    props.alphas[i],
+                    props.alphas_idxs[i]
+            };
+        }
+
+        return result;
+    }
 };
 
 //TODO remove?
