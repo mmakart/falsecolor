@@ -71,7 +71,7 @@ struct ReversedGreedyFitter {
             for (const auto& coord : coords) {
                 Signed x = coord.x;
                 Signed y = coord.y;
-                //for (size_t type_idx : type_idxs) { // TODO: temp
+
                 for (size_t type_idx : m_allowed_brush_types) {
                     const bool enough_acc_alpha {
                         m_stats(x, y).threshold_count_per_brush_type[type_idx] > 0

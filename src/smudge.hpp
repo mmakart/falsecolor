@@ -116,13 +116,15 @@ struct Smudge {
 
     void apply(Image& image) const
     {
+        using PredefinedBrushes::all_types, PredefinedBrushes::all_colors;
+
         if (x < 0 || static_cast<size_t>(x) >= image.width() ||
                 y < 0 || static_cast<size_t>(y) >= image.height()) {
             return;
         }
 
-        const auto& props{PredefinedBrushes::all_types[type_idx]};
-        const auto color{PredefinedBrushes::all_colors[color_idx].color};
+        const auto& props{all_types[type_idx]};
+        const auto color{all_colors[color_idx].color};
 
         for (auto i = 0; i < props.num_pixels; ++i) {
             image.blend_pixel(
@@ -134,11 +136,15 @@ struct Smudge {
         }
     }
 
-    // TODO: replace vector to avoid heap allocations
-    constexpr std::vector<std::tuple<Signed, Signed, DType, size_t>> pixels_data() const {
-        const auto& props{PredefinedBrushes::all_types[type_idx]};
+    using SmudgePixelsData = std::vector<std::tuple<Signed, Signed, DType, size_t>>;
 
-        std::vector<std::tuple<Signed, Signed, DType, size_t>> result(props.num_pixels);
+    // TODO: replace vector to avoid heap allocations
+    constexpr SmudgePixelsData pixels_data() const {
+        using PredefinedBrushes::all_types, PredefinedBrushes::num_types;
+
+        const auto& props{all_types[type_idx]};
+
+        SmudgePixelsData result(props.num_pixels);
 
         for (size_t i = 0; i < props.num_pixels; ++i) {
             result[i] = {
