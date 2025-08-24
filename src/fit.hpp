@@ -18,7 +18,11 @@ struct ReversedGreedyFitter {
             DType error_tolerance,
             const std::vector<size_t>& allowed_brush_types
             )
-        : m_canvas(canvas)
+        : m_width(target.width())
+        , m_height(target.height())
+        , m_threshold_alpha{error_tolerance}
+        , m_allowed_brush_types(allowed_brush_types)
+        , m_canvas(canvas)
         , m_target(target)
         , m_rev_canvas(target)
         , m_errors_added(target.width(), target.height(), {0, 0, 0})
@@ -26,8 +30,6 @@ struct ReversedGreedyFitter {
         , m_abs_errors_if_canvas(target.width(), target.height(), 0)
         , m_acc_alphas(target.width(), target.height(), 1)
         , m_stats(target.width(), target.height())
-        , m_threshold_alpha{error_tolerance}
-        , m_allowed_brush_types(allowed_brush_types)
     {
         init_pixel_stats();
     }
@@ -35,65 +37,67 @@ struct ReversedGreedyFitter {
     std::vector<Smudge<DType>> fit() {
         std::vector<Smudge<DType>> result;
 
-        int sum_threshold_alpha{};
-
-        //TODO temp
-        struct Coord { Signed x, y; };
-        std::vector<Coord> coords(m_stats.width() * m_stats.height());
-        std::vector<size_t> color_idxs(PredefinedBrushes::num_colors);
-        //std::vector<size_t> type_idxs(3); //TODO temp
-
-        std::generate(coords.begin(), coords.end(), [&, xx=0, yy=0] () mutable {
-                    if (xx == m_stats.width()) { xx = 0; ++yy; }
-                    Coord res{xx, yy};
-                    ++xx;
-                    return res;
-                }
-        );
-        std::iota(color_idxs.begin(), color_idxs.end(), 0);
-        //std::iota(type_idxs.begin(), type_idxs.end(), 0); //TODO temp
+        int num_pixels_to_process{};
 
         while (true) {
             Signed best_x{0}, best_y{0};
             size_t best_type_idx{}, best_color_idx{};
-            DType best_error{1000000}, best_distance{1000000};
+            DType best_error{1000000}, best_distance{1000000},
+                    best_acc_alpha_reduced{-1000000};
 
-            sum_threshold_alpha = std::count_if(m_acc_alphas.cbegin(), m_acc_alphas.cend(),
-                    [&](const auto& el) {
+            num_pixels_to_process = std::count_if(
+                    m_abs_errors_if_canvas.cbegin(),
+                    m_abs_errors_if_canvas.cend(),
+                    [this](DType el) {
+                        // m_threshold_alpha means "max OK error per pixel"
                         return el > m_threshold_alpha;
                     }
             );
 
-            if (sum_threshold_alpha == 0) {
+            if (num_pixels_to_process == 0) {
                 break;
             }
 
-            for (const auto& coord : coords) {
-                Signed x = coord.x;
-                Signed y = coord.y;
+            for (Signed y = 0; y < m_height; ++y) {
+                for (Signed x = 0; x < m_width; ++x) {
+                    for (size_t type_idx : m_allowed_brush_types) {
+                        const bool small_error_here {
+                            m_stats(x, y).above_threshold_error_count_per_brush_type[type_idx] == 0
+                        };
 
-                for (size_t type_idx : m_allowed_brush_types) {
-                    const bool enough_acc_alpha {
-                        m_stats(x, y).threshold_count_per_brush_type[type_idx] > 0
-                    };
+                        if (small_error_here) {
+                            continue;
+                        }
 
-                    if (!enough_acc_alpha) {
-                        continue;
-                    }
+                        using PredefinedBrushes::num_colors;
+                        for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
+                            const DType error {
+                                    m_stats(x, y).errors_per_brush_type(type_idx, color_idx)
+                            };
+                            const DType distance {
+                                    m_stats(x, y).distances_per_brush_type(type_idx, color_idx)
+                            };
+                            const DType acc_alpha_reduced {
+                                    m_stats(x, y).acc_alpha_reduced_per_brush_type[type_idx]
+                            };
 
-                    for (size_t color_idx : color_idxs) {
-                        const DType error = m_stats(x, y).errors_per_brush_type(type_idx, color_idx);
-                        const DType distance = m_stats(x, y).distances_per_brush_type(type_idx, color_idx);
+                            // TODO: replace to weighted sum?
+                            if ((error < best_error) ||
+                                    (error == best_error &&
+                                    distance < best_distance) ||
+                                    (error == best_error &&
+                                    distance == best_distance &&
+                                    acc_alpha_reduced > best_acc_alpha_reduced))
+                            {
+                                best_error = error;
+                                best_distance = distance;
+                                best_acc_alpha_reduced = acc_alpha_reduced;
 
-                        if (error < best_error
-                                || error == best_error && distance < best_distance) {
-                            best_error = error;
-                            best_distance = distance;
-
-                            best_x = x;
-                            best_y = y;
-                            best_type_idx = type_idx;
-                            best_color_idx = color_idx;
+                                best_x = x;
+                                best_y = y;
+                                best_type_idx = type_idx;
+                                best_color_idx = color_idx;
+                            }
                         }
                     }
                 }
@@ -113,6 +117,7 @@ struct ReversedGreedyFitter {
         return result;
     }
 
+private:
     struct PixelStats {
         // Stored on stack for memory locality and performance.
         Array2DConstDim<DType,
@@ -124,15 +129,20 @@ struct ReversedGreedyFitter {
         Array2DConstDim<DType,
                 PredefinedBrushes::num_types,
                 PredefinedBrushes::num_colors> distances_per_brush_type{};
+//        std::array<int,
+//                PredefinedBrushes::num_types> threshold_count_per_brush_type{};
+        std::array<DType,
+                PredefinedBrushes::num_types> acc_alpha_reduced_per_brush_type{};
+//        std::array<DType,
+//                PredefinedBrushes::num_types> sum_error_if_canvas_per_brush_type{};
         std::array<int,
-                PredefinedBrushes::num_types> threshold_count_per_brush_type{};
+                PredefinedBrushes::num_types> above_threshold_error_count_per_brush_type{};
     };
 
-private:
     template <typename Func>
     void for_all_image(Func func) {
-        for (Signed y = 0; y < m_stats.height(); ++y) {
-            for (Signed x = 0; x < m_stats.width(); ++x) {
+        for (Signed y = 0; y < m_height; ++y) {
+            for (Signed x = 0; x < m_width; ++x) {
                 func(x, y);
             }
         }
@@ -147,8 +157,7 @@ private:
         for(const auto [dx, dy, alpha, alpha_idx] : smudge.pixels_data()) {
             const auto [x, y] = std::pair{smudge.x + dx, smudge.y + dy};
 
-            if (y < 0 || y >= m_stats.height() ||
-                    x < 0 || x >= m_stats.width()) {
+            if (y < 0 || y >= m_height || x < 0 || x >= m_width) {
                 continue;
             }
 
@@ -180,8 +189,7 @@ private:
                 const Signed x{smudge.x + dx};
                 const Signed y{smudge.y + dy};
 
-                if (y < 0 || y >= m_stats.height() ||
-                        x < 0 || x >= m_stats.width()) {
+                if (y < 0 || y >= m_height || x < 0 || x >= m_width) {
                     continue;
                 }
 
@@ -221,8 +229,8 @@ private:
                     const Signed new_x{x + props.xs[coord_idx]};
                     const Signed new_y{y + props.ys[coord_idx]};
 
-                    if (new_y < 0 || new_y >= m_stats.height() ||
-                            new_x < 0 || new_x >= m_stats.width()) {
+                    if (new_y < 0 || new_y >= m_height ||
+                            new_x < 0 || new_x >= m_width) {
                         continue;
                     }
 
@@ -247,6 +255,7 @@ private:
         ));
     }
 
+#if 0
     void update_threshold_count_per_brush_type(Signed x, Signed y) {
         using PredefinedBrushes::all_types, PredefinedBrushes::num_types;
 
@@ -258,8 +267,8 @@ private:
                 const Signed new_x{x + props.xs[coord_idx]};
                 const Signed new_y{y + props.ys[coord_idx]};
 
-                if (new_y < 0 || new_y >= m_stats.height() ||
-                        new_x < 0 || new_x >= m_stats.width()) {
+                if (new_y < 0 || new_y >= m_height ||
+                        new_x < 0 || new_x >= m_width) {
                     continue;
                 }
 
@@ -271,6 +280,7 @@ private:
             m_stats(x, y).threshold_count_per_brush_type[type_idx] = count;
         }
     }
+#endif
 
     void update_errors_per_brush_type(Signed x, Signed y) {
         using PredefinedBrushes::all_types, PredefinedBrushes::num_types,
@@ -285,8 +295,8 @@ private:
                     const Signed new_x{x + props.xs[coord_idx]};
                     const Signed new_y{y + props.ys[coord_idx]};
 
-                    if (new_y < 0 || new_y >= m_stats.height() ||
-                            new_x < 0 || new_x >= m_stats.width()) {
+                    if (new_y < 0 || new_y >= m_height ||
+                            new_x < 0 || new_x >= m_width) {
                         continue;
                     }
 
@@ -297,6 +307,82 @@ private:
 
                 m_stats(x, y).errors_per_brush_type(type_idx, color_idx) = sum;
             }
+        }
+    }
+
+    void update_acc_alpha_reduced_per_brush_type(Signed x, Signed y) {
+        using PredefinedBrushes::all_types, PredefinedBrushes::num_types;
+
+        for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
+            const auto& props{all_types[type_idx]};
+
+            DType sum{0};
+            for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
+                const Signed new_x{x + props.xs[coord_idx]};
+                const Signed new_y{y + props.ys[coord_idx]};
+
+                if (new_y < 0 || new_y >= m_height ||
+                        new_x < 0 || new_x >= m_width) {
+                    continue;
+                }
+
+                const DType alpha{props.alphas[coord_idx]};
+
+                sum += m_acc_alphas(new_x, new_y) * alpha;
+            }
+
+            m_stats(x, y).acc_alpha_reduced_per_brush_type[type_idx] = sum;
+        }
+    }
+
+#if 0
+    void update_sum_error_if_canvas_per_brush_type(Signed x, Signed y) {
+        using PredefinedBrushes::all_types, PredefinedBrushes::num_types;
+
+        for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
+            const auto& props{all_types[type_idx]};
+
+            DType sum{0};
+            for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
+                const Signed new_x{x + props.xs[coord_idx]};
+                const Signed new_y{y + props.ys[coord_idx]};
+
+                if (new_y < 0 || new_y >= m_height ||
+                        new_x < 0 || new_x >= m_width) {
+                    continue;
+                }
+
+                sum += m_abs_errors_if_canvas(new_x, new_y);
+            }
+
+            m_stats(x, y).sum_error_if_canvas_per_brush_type[type_idx] = sum;
+        }
+    }
+#endif
+
+    void update_threshold_error_count_per_brush_type(Signed x, Signed y) {
+        using PredefinedBrushes::all_types, PredefinedBrushes::num_types;
+
+        for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
+            const auto& props{all_types[type_idx]};
+
+            int sum{0};
+            for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
+                const Signed new_x{x + props.xs[coord_idx]};
+                const Signed new_y{y + props.ys[coord_idx]};
+
+                if (new_y < 0 || new_y >= m_height ||
+                        new_x < 0 || new_x >= m_width) {
+                    continue;
+                }
+
+                // m_threshold_alpha means "max OK error per pixel" here
+                if (m_abs_errors_if_canvas(new_x, new_y) > m_threshold_alpha) {
+                    ++sum;
+                }
+            }
+
+            m_stats(x, y).above_threshold_error_count_per_brush_type[type_idx] = sum;
         }
     }
 
@@ -343,13 +429,29 @@ private:
             update_distance_per_brush_type(x, y);
         });
 
+#if 0
         for_all_image([this](Signed x, Signed y) {
             update_threshold_count_per_brush_type(x, y);
+        });
+#endif
+        for_all_image([this](Signed x, Signed y) {
+            update_acc_alpha_reduced_per_brush_type(x, y);
+        });
+
+#if 0
+        // Must follow "for all image: update errors if canvas"
+        for_all_image([this](Signed x, Signed y) {
+            update_sum_error_if_canvas_per_brush_type(x, y);
+        });
+#endif
+        // Must follow "for all image: update errors if canvas"
+        for_all_image([this](Signed x, Signed y) {
+            update_threshold_error_count_per_brush_type(x, y);
         });
     }
 
     void reverse_apply_smudge(const Smudge<DType>& smudge) {
-        // Must preceide updating of m_acc_alphas 'cause it needs the old values
+        // Must preceide updating of m_acc_alphas 'cause it needs its old values
         for_smudge_pixels(smudge, [this](Signed x, Signed y,
                         const Rgb<DType>& color_premul, DType alpha) {
                     update_errors_added(x, y, color_premul, alpha);
@@ -361,6 +463,9 @@ private:
                     update_rev_canvas_and_acc_alphas(x, y, color_premul, alpha);
                 }
         );
+
+        // update_errors_added and update_rev_canvas_and_acc_alphas must
+        // preceide everything below:
 
         for_smudge_pixels(smudge, [this](Signed x, Signed y, const Rgb<DType>&, DType) {
                 update_errors_per_alpha(x, y);
@@ -374,12 +479,29 @@ private:
                 update_distance_per_brush_type(x, y);
             });
 
+        // Must follow "for smudge pixels: update errors per alpha"
         for_smudge_pixels_and_neighborhood(smudge, [this](Signed x, Signed y) {
                 update_errors_per_brush_type(x, y);
             });
 
+#if 0
         for_smudge_pixels_and_neighborhood(smudge, [this](Signed x, Signed y) {
                 update_threshold_count_per_brush_type(x, y);
+            });
+#endif
+        for_smudge_pixels_and_neighborhood(smudge, [this](Signed x, Signed y) {
+                update_acc_alpha_reduced_per_brush_type(x, y);
+            });
+
+#if 0
+        // Must follow "for smudge pixels: update errors if canvas"
+        for_smudge_pixels_and_neighborhood(smudge, [this](Signed x, Signed y) {
+                update_sum_error_if_canvas_per_brush_type(x, y);
+            });
+#endif
+        // Must follow "for smudge pixels: update errors if canvas"
+        for_smudge_pixels_and_neighborhood(smudge, [this](Signed x, Signed y) {
+                update_threshold_error_count_per_brush_type(x, y);
             });
     }
 
@@ -409,6 +531,13 @@ private:
                 }) << '\n';
         std::cerr << "Total smudges = " << std::size(result) << '\n';
     }
+
+    const Signed m_width;
+    const Signed m_height;
+
+    const DType m_threshold_alpha{};
+
+    const std::vector<size_t> m_allowed_brush_types;
 
     // Reference image of in-game canvas (e.g. blank or partially finished one)
     const Array2D<Rgb<DType>> m_canvas;
@@ -443,10 +572,6 @@ private:
 
     // Necessary data for picking next smudge
     Array2D<PixelStats> m_stats;
-
-    const DType m_threshold_alpha{};
-
-    const std::vector<size_t> m_allowed_brush_types;
 };
 
 // Gives a list of smudges (x, y, color, type) which, applied in this order,

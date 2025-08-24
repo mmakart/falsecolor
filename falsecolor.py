@@ -9,6 +9,13 @@ save_debug_img = '--save-intermediate' in sys.argv
 target = Image.open(sys.argv[1]).convert('RGB')
 error_tolerance = float(sys.argv[3])
 
+if len(sys.argv) >= 5 and sys.argv[4] != '--save-intermediate': # TODO: dirty
+    tiled_canvas = Image.open(sys.argv[4]).convert('RGB')
+    if tiled_canvas.size != target.size:
+        raise ValueError('Canvas and target must have equal width and height')
+else:
+    tiled_canvas = Image.new(target.mode, (target.width, target.height), (255, 255, 255))
+
 brushes = {
     "White": (0xff, 0xff, 0xff),
     "Yellow": (0xff, 0xf0, 0x00),
@@ -96,30 +103,27 @@ def paint_1px(im, x, y, brush):
 def paint_1px_reverse(im, x, y, brush):
     im.putpixel((x, y), (255, 255, 255))
 
-def do_16x16(input, error_tolerance):
-    output = Image.new(input.mode, (16, 16))
-    output.paste((255, 255, 255), (0, 0, output.size[0], output.size[1]))
-
-    target_data = np.array(input)
-    canvas_data = np.array(output)
+def do_16x16(target, canvas, error_tolerance):
+    target_data = np.array(target)
+    canvas_data = np.array(canvas)
 
     opt_start = time.time()
     steps = falsecolor.fit(target_data, canvas_data, error_tolerance)
     opt_time = time.time() - opt_start
 
-    print(f'fitting took {opt_time} seconds')
-
-    make_output(output, steps)
-    save_instructions_txt(steps, 'instructions.txt')
+    print(f'fitting took {opt_time:.4} seconds')
 
     if save_debug_img:
-        save_hist(steps)
-        after_reversed = save_reversed_steps(input, steps)
+        save_hist(canvas, steps)
+        after_reversed = save_reversed_steps(target, steps)
         save_after_reversed_steps(after_reversed, steps)
 
-    return output
+    apply_all(canvas, steps)
+    save_instructions_txt(steps, 'instructions.txt')
 
-def make_output(canvas, steps):
+    return canvas, len(steps)
+
+def apply_all(canvas, steps):
     for x, y, brush, brush_type in steps:
         if brush_type == 'p':
             paint_1px(canvas, x, y, brush)
@@ -131,28 +135,49 @@ def make_output(canvas, steps):
             raise ValueError(f'Unknown brush type: {brush_type}')
 
 def save_instructions_txt(steps, filename):
+    offsets = {'w': 0, 'p': 1, 'o': 2}
+
     with open(filename, 'w') as fout:
-        current_x, current_y = 1000000, 1000000
+        annotation='''\
+# Legend:
+# x: column [1..width]
+# y: row [1..height] (from top to bottom)
+# t: brush type:
+#     p: 1 pixel brush
+#     w: watercolor brush
+#     w: oil brush
+
+#  #:  x  y t color
+'''
+        fout.write(annotation)
 
         for i, (x, y, brush, brush_type) in enumerate(steps):
-            if not (current_x == x and current_y == y):
+            if i == 0:
                 current_x, current_y = x, y
-                fout.write('\n')
-            fout.write(f'{i+1:4}: {x+1:2} {y+1:2} {brush:10} {brush_type}\n')
+            elif not (x == current_x and y == current_y):
+                dx, dy = x - current_x, y - current_y
+                horizontal_move = f'> {dx}' if dx > 0 else (f'< {-dx}' if dx < 0 else '')
+                vertical_move = f'v {dy}' if dy > 0 else (f'^ {-dy}' if dy < 0 else '')
 
-def save_hist(steps):
-    output = Image.new('RGB', (16, 16), (255, 255, 255))
-    output.save(f'hist/{0:04}.png')
+                fout.write('\n#   ' + f'{horizontal_move} {vertical_move}'.strip() + '\n')
+
+                current_x, current_y = x, y
+
+            fout.write(f'{i+1:4}: {x+1:2} {y+1:2} {" " * offsets[brush_type]}{brush_type} {brush:10}\n')
+
+def save_hist(canvas, steps):
+    canvas_copy = canvas.copy()
+    canvas_copy.save(f'hist/{0:04}.png')
     for i, (x, y, brush, brush_type) in enumerate(steps):
         if brush_type == 'p':
-            paint_1px(output, x, y, brush)
+            paint_1px(canvas_copy, x, y, brush)
         elif brush_type == 'w':
-            smudge_water(output, x, y, brush)
+            smudge_water(canvas_copy, x, y, brush)
         elif brush_type == 'o':
-            smudge_oil(output, x, y, brush)
+            smudge_oil(canvas_copy, x, y, brush)
         else:
             raise ValueError(f'Unknown brush type: {brush_type}')
-        output.save(f'hist/{i+1:04}.png')
+        canvas_copy.save(f'hist/{i+1:04}.png')
 
 def save_reversed_steps(target, steps):
     target_copy = target.copy()
@@ -182,22 +207,28 @@ def save_after_reversed_steps(after_reversed, steps):
             raise ValueError(f'Unknown brush type: {brush_type}')
         after_reversed.save(f'after_rev/{i+1:04}.png')
 
-tiled_canvas = Image.new(target.mode, target.size)
-
 x_tiles = (target.size[0] + 15) // 16
 y_tiles = (target.size[1] + 15) // 16
 
 print(f'target.size {target.size}')
 print(f'tiling {x_tiles}x{y_tiles}')
 
+total_steps = 0
+
 for xtile in range(0, x_tiles):
     for ytile in range(0, y_tiles):
-        crop_rect = (xtile*16, ytile*16, xtile*16+16, ytile*16+16)
-        print(crop_rect)
-        tile = target.crop(crop_rect)
+        crop_coords = (xtile*16, ytile*16, xtile*16+16, ytile*16+16)
+        print(crop_coords)
 
-        tile_output = do_16x16(tile, error_tolerance)
+        target_tile = target.crop(crop_coords)
+        canvas_tile = tiled_canvas.crop(crop_coords)
+
+        tile_output, num_tile_steps = do_16x16(target_tile, canvas_tile, error_tolerance)
 
         tiled_canvas.paste(tile_output, (xtile*16, ytile*16))
+
+        total_steps += num_tile_steps
+
+print(f'Total smudges in all canvases: {total_steps}')
 
 tiled_canvas.save(sys.argv[2])
