@@ -82,11 +82,11 @@ struct Array2DConstDim {
     using ConstIterator = typename Container::const_iterator;
 
     constexpr T& operator()(Signed x, Signed y) {
-        return m_data[static_cast<size_t>(y * Width + x)];
+        return m_data[static_cast<size_t>(y * static_cast<Signed>(Width) + x)];
     }
 
     constexpr const T& operator()(Signed x, Signed y) const {
-        return m_data[static_cast<size_t>(y * Width + x)];
+        return m_data[static_cast<size_t>(y * static_cast<Signed>(Width) + x)];
     }
 
     Iterator begin() noexcept {
