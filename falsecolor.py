@@ -123,7 +123,7 @@ def save_instructions_txt(steps, filename):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     with open(filename, 'w') as fout:
-        offsets = {'w': 0, 'p': 1, 'o': 2}
+        offsets = {'w': '', 'p': ' ', 'o': '  '}
         hints = calc_hotbar_exchange_hints(steps)
 
         annotation='''\
@@ -147,12 +147,13 @@ def save_instructions_txt(steps, filename):
                 horizontal_move = f'> {dx}' if dx > 0 else (f'< {-dx}' if dx < 0 else '')
                 vertical_move = f'v {dy}' if dy > 0 else (f'^ {-dy}' if dy < 0 else '')
 
-                fout.write('\n#   ' + f'{horizontal_move} {vertical_move}'.strip() + '\n')
+                fout.write('\n#    ' + f'{horizontal_move} {vertical_move}'.strip() + '\n')
 
                 current_x, current_y = x, y
 
-            fout.write(f'{i+1:4}:  {x+1:2} {y+1:2}  {" " * offsets[brush_type] + brush_type + ' ' + brush:14}')
-            fout.write(f' - {hints[i][1]} {hints[i][0]}\n' if i in hints else '\n')
+            smudge = f'{i+1:5}:  ({x+1:2} {y+1:2})  {offsets[brush_type]}{brush_type} {brush:10}'
+            smudge += f' - {hints[i][1]} {hints[i][0]}\n' if i in hints else '\n'
+            fout.write(smudge)
 
 def save_intermediate_images(image, steps, apply_per_brush, tile_pos, base_directory):
     xtile, ytile = tile_pos
