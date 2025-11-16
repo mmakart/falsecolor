@@ -91,10 +91,10 @@ struct ReversedGreedyFitter {
                         using PredefinedBrushes::num_colors;
                         for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
                             const DType error {
-                                    m_stats(x, y).errors_per_brush_type(type_idx, color_idx)
+                                    m_stats(x, y).errors_per_brush_type(color_idx, type_idx)
                             };
                             const DType distance {
-                                    m_stats(x, y).distances_per_brush_type(type_idx, color_idx)
+                                    m_stats(x, y).distances_per_brush_type(color_idx, type_idx)
                             };
                             const DType acc_alpha_reduced {
                                     m_stats(x, y).acc_alpha_reduced_per_brush_type[type_idx]
@@ -135,14 +135,14 @@ private:
     struct PixelStats {
         // Stored on stack for memory locality and performance.
         Array2DConstDim<DType,
-                PredefinedBrushes::num_alphas,
-                PredefinedBrushes::num_colors> errors_per_alpha{};
+                PredefinedBrushes::num_colors,
+                PredefinedBrushes::num_alphas> errors_per_alpha{};
         Array2DConstDim<DType,
-                PredefinedBrushes::num_types,
-                PredefinedBrushes::num_colors> errors_per_brush_type{};
+                PredefinedBrushes::num_colors,
+                PredefinedBrushes::num_types> errors_per_brush_type{};
         Array2DConstDim<DType,
-                PredefinedBrushes::num_types,
-                PredefinedBrushes::num_colors> distances_per_brush_type{};
+                PredefinedBrushes::num_colors,
+                PredefinedBrushes::num_types> distances_per_brush_type{};
 #ifdef CONSIDER_ALPHA
         std::array<int,
                 PredefinedBrushes::num_types> threshold_alpha_count_per_brush_type{};
@@ -217,8 +217,8 @@ private:
         using PredefinedBrushes::all_alphas, PredefinedBrushes::num_alphas,
                   PredefinedBrushes::num_colors, PredefinedBrushes::premul;
 
-        for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
-            for (size_t alpha_idx = 0; alpha_idx < num_alphas; ++alpha_idx) {
+        for (size_t alpha_idx = 0; alpha_idx < num_alphas; ++alpha_idx) {
+            for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
                 const Rgb<DType> rgb_error = error_from_reversed_blend(
                         m_rev_canvas(x, y),
                         premul(alpha_idx, color_idx),
@@ -226,7 +226,7 @@ private:
                         m_acc_alphas(x, y)
                 );
 
-                m_stats(x, y).errors_per_alpha(alpha_idx, color_idx) = rgb_to_distance(rgb_error);
+                m_stats(x, y).errors_per_alpha(color_idx, alpha_idx) = rgb_to_distance(rgb_error);
             }
         }
     }
@@ -235,11 +235,12 @@ private:
         using PredefinedBrushes::all_types, PredefinedBrushes::all_colors,
                 PredefinedBrushes::num_types, PredefinedBrushes::num_colors;
 
-        for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
-            for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
-                const auto& props{all_types[type_idx]};
+        for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
+            const auto& props{all_types[type_idx]};
 
+            for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
                 DType sum{0};
+
                 for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
                     const Signed new_x{x + props.xs[coord_idx]};
                     const Signed new_y{y + props.ys[coord_idx]};
@@ -255,7 +256,7 @@ private:
                     ) * m_acc_alphas(new_x, new_y);
                 }
 
-                m_stats(x, y).distances_per_brush_type(type_idx, color_idx) = sum;
+                m_stats(x, y).distances_per_brush_type(color_idx, type_idx) = sum;
             }
         }
     }
@@ -301,11 +302,12 @@ private:
         using PredefinedBrushes::all_types, PredefinedBrushes::num_types,
                 PredefinedBrushes::num_colors;
 
-        for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
-            for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
-                const auto& props{all_types[type_idx]};
+        for (size_t type_idx = 0; type_idx < num_types; ++type_idx) {
+            const auto& props{all_types[type_idx]};
 
+            for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
                 DType sum{0};
+
                 for (size_t coord_idx = 0; coord_idx < props.num_pixels; ++coord_idx) {
                     const Signed new_x{x + props.xs[coord_idx]};
                     const Signed new_y{y + props.ys[coord_idx]};
@@ -317,10 +319,10 @@ private:
 
                     const size_t alpha_idx{props.alphas_idxs[coord_idx]};
 
-                    sum += m_stats(new_x, new_y).errors_per_alpha(alpha_idx, color_idx);
+                    sum += m_stats(new_x, new_y).errors_per_alpha(color_idx, alpha_idx);
                 }
 
-                m_stats(x, y).errors_per_brush_type(type_idx, color_idx) = sum;
+                m_stats(x, y).errors_per_brush_type(color_idx, type_idx) = sum;
             }
         }
     }
