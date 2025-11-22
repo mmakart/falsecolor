@@ -195,6 +195,12 @@ def make_tiled_image(target, initial_image, tile_size, error_tolerance, output_d
 
             steps = calc_smudges(target_tile, canvas_tile, error_tolerance)
 
+            print(f'Total movement before: manhattan={total_movement(steps,
+                    manhattan_distance)} custom={total_movement(steps, custom_distance)}')
+            steps = minimize_movement(steps, (tile_size, tile_size), manhattan_distance)
+            print(f'Total movement after: manhattan={total_movement(steps,
+                    manhattan_distance)} custom={total_movement(steps, custom_distance)}')
+
             result_tile = apply_all(canvas_tile, steps)
             result_image.paste(result_tile, crop_coords[:2])
 
@@ -257,8 +263,106 @@ def calc_hotbar_exchange_hints(steps):
 
     return hints
 
+def get_dependencies(steps, sizes):
+    width, height = sizes
 
+    dcoords = {
+        'p': (np.array([0]), np.array([0])),
+        'w': (np.array([-1, 0, 0, 0, 1]), np.array([0, -1, 0, 1, 0])),
+        'o': (np.array([-1, 0, 0, 0, 1]), np.array([0, -1, 0, 1, 0]))
+    }
 
+    EMPTY = np.int32(-1)
+
+    last_steps = np.full((height, width), EMPTY, dtype=np.int32)
+    steps_over = {}
+    steps_under = {}
+
+    for i, (x, y, _, brush_type) in enumerate(steps):
+        try:
+            coords = (dcoords[brush_type][0] + y, dcoords[brush_type][1] + x)
+        except KeyError:
+            raise ValueError(f'Unknown brush type: {brush_type}')
+
+        in_bounds = ((coords[0] >= 0) & (coords[0] < height) &
+                (coords[1] >= 0) & (coords[1] < width))
+        coords = (coords[0][in_bounds], coords[1][in_bounds])
+
+        covered_steps = np.unique(last_steps[coords])
+        covered_steps = covered_steps[covered_steps != EMPTY]
+
+        for covered_step in covered_steps:
+            steps_over.setdefault(covered_step, set()).add(i)
+            steps_under.setdefault(i, set()).add(covered_step)
+
+        last_steps[coords] = i
+
+    return steps_over, steps_under
+
+def minimize_movement(steps, sizes, distance_func):
+    if len(steps) == 0:
+        return steps
+
+    steps_over, steps_under = get_dependencies(steps, sizes)
+
+    candidates = {i for i in range(len(steps)) if i not in steps_under.keys()}
+
+    # TODO: transform to priority queue by distance if possible.
+    distances = {i: {j: distance_func(steps[i][0:2], steps[j][0:2])
+            for j in candidates if j != i} for i in candidates}
+
+    # Closest to top-left corner. But it's okay to choose any other smudge.
+    current_step = min(((i, steps[i][0] + steps[i][1]) for i in candidates),
+            key=lambda el: el[1])[0]
+
+    result = [steps[current_step]]
+
+    # Custom greedy travelling salesman problem algorithm.
+    # There aren't general applicable TSP solvers here because smudges aren't
+    # directed graph because they have too complex order (a smudge can't have
+    # place before any smudge it covers).
+    while True:
+        if current_step in steps_over.keys(): # Has smudges above
+            for step_over in steps_over[current_step]:
+                steps_under[step_over].remove(current_step)
+                if len(steps_under[step_over]) == 0:
+                    # Unblock new smudge
+                    for candidate in candidates:
+                        dist = distance_func(steps[step_over][0:2], steps[candidate][0:2])
+                        distances.setdefault(step_over, {})[candidate] = dist
+                        distances[candidate][step_over] = dist
+                    candidates.add(step_over)
+
+        candidates.remove(current_step)
+
+        if len(candidates) == 0:
+            break
+
+        next_step = min(((other, dist) for (other, dist)
+                in distances[current_step].items()), key=lambda el: el[1])[0]
+        del distances[current_step]
+        for others in distances.values():
+            # No-throw variant of "del others[current_step]"
+            others.pop(current_step, None)
+
+        current_step = next_step
+
+        result.append(steps[current_step])
+
+    return result
+
+def manhattan_distance(p1, p2):
+    return abs(p2[0] - p1[0]) + abs(p2[1] - p1[1])
+
+def euclidean_distance(p1, p2):
+    return ((p2[0] - p1[0]) ** 2 + (p2[1] - p1[0]) ** 2) ** 0.5
+
+def custom_distance(p1, p2):
+    dist = manhattan_distance(p1, p2)
+    return dist if dist == 0 else (dist + 5 if dist <= 8 else 25)
+
+def total_movement(steps, dist_func):
+    return sum(dist_func(s1[0:2], s2[0:2]) for s1, s2 in zip(steps[:-1], steps[1:]))
 
 def main():
     save_debug_img = '--save-intermediate' in sys.argv
