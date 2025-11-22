@@ -21,6 +21,7 @@ struct ReversedGreedyFitter {
         : m_width(target.width())
         , m_height(target.height())
         , m_threshold_alpha{error_tolerance}
+        , m_error_tolerance{error_tolerance * max_abs_rgb_error}
         , m_allowed_brush_types(allowed_brush_types)
         , m_canvas(canvas)
         , m_target(target)
@@ -49,7 +50,6 @@ struct ReversedGreedyFitter {
             num_pixels_to_process = std::count_if(
                     m_acc_alphas.cbegin(), m_acc_alphas.cend(),
                     [this](DType el) {
-                        // m_threshold_alpha means "max OK error per pixel"
                         return el > m_threshold_alpha;
                     }
             );
@@ -58,8 +58,7 @@ struct ReversedGreedyFitter {
                     m_abs_errors_if_canvas.cbegin(),
                     m_abs_errors_if_canvas.cend(),
                     [this](DType el) {
-                        // m_threshold_alpha means "max OK error per pixel"
-                        return el > m_threshold_alpha;
+                        return el > m_error_tolerance;
                     }
             );
 #endif
@@ -103,10 +102,10 @@ struct ReversedGreedyFitter {
                             // TODO: replace to weighted sum?
                             if ((error < best_error) ||
                                     (error == best_error &&
-                                    distance < best_distance) ||
+                                    acc_alpha_reduced > best_acc_alpha_reduced) ||
                                     (error == best_error &&
-                                    distance == best_distance &&
-                                    acc_alpha_reduced > best_acc_alpha_reduced))
+                                    acc_alpha_reduced == best_acc_alpha_reduced &&
+                                    distance < best_distance))
                             {
                                 best_error = error;
                                 best_distance = distance;
@@ -136,7 +135,7 @@ private:
         // Stored on stack for memory locality and performance.
         Array2DConstDim<DType,
                 PredefinedBrushes::num_colors,
-                PredefinedBrushes::num_alphas> errors_per_alpha{};
+                PredefinedBrushes::num_alphas> excessive_errors_per_alpha{};
         Array2DConstDim<DType,
                 PredefinedBrushes::num_colors,
                 PredefinedBrushes::num_types> errors_per_brush_type{};
@@ -218,15 +217,22 @@ private:
                   PredefinedBrushes::num_colors, PredefinedBrushes::premul;
 
         for (size_t alpha_idx = 0; alpha_idx < num_alphas; ++alpha_idx) {
+            const DType alpha{all_alphas[alpha_idx]};
+
             for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
                 const Rgb<DType> rgb_error = error_from_reversed_blend(
                         m_rev_canvas(x, y),
                         premul(alpha_idx, color_idx),
-                        all_alphas[alpha_idx],
+                        alpha,
                         m_acc_alphas(x, y)
                 );
 
-                m_stats(x, y).errors_per_alpha(color_idx, alpha_idx) = rgb_to_distance(rgb_error);
+                const DType abs_error = rgb_to_distance(rgb_error);
+
+                m_stats(x, y).excessive_errors_per_alpha(color_idx, alpha_idx) =
+                        std::max(static_cast<DType>(0), abs_error /
+                        m_acc_alphas(x, y) - m_error_tolerance * alpha) *
+                        m_acc_alphas(x, y);
             }
         }
     }
@@ -319,7 +325,7 @@ private:
 
                     const size_t alpha_idx{props.alphas_idxs[coord_idx]};
 
-                    sum += m_stats(new_x, new_y).errors_per_alpha(color_idx, alpha_idx);
+                    sum += m_stats(new_x, new_y).excessive_errors_per_alpha(color_idx, alpha_idx);
                 }
 
                 m_stats(x, y).errors_per_brush_type(color_idx, type_idx) = sum;
@@ -369,8 +375,7 @@ private:
                     continue;
                 }
 
-                // m_threshold_alpha means "max OK error per pixel" here
-                if (m_abs_errors_if_canvas(new_x, new_y) > m_threshold_alpha) {
+                if (m_abs_errors_if_canvas(new_x, new_y) > m_error_tolerance) {
                     ++sum;
                 }
             }
@@ -519,6 +524,7 @@ private:
     const Signed m_height;
 
     const DType m_threshold_alpha{};
+    const DType m_error_tolerance{};
 
     const std::vector<size_t> m_allowed_brush_types;
 

@@ -207,6 +207,8 @@ inline Rgb<DType> error_from_reversed_blend(
     };
 }
 
+inline constexpr DType max_abs_rgb_error{std::sqrt(static_cast<DType>(3))};
+
 template <typename DType>
 inline DType rgb_to_distance(const Rgb<DType>& diff) {
     return std::hypot(diff.r, diff.g, diff.b);
