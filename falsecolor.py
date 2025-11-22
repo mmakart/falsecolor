@@ -50,12 +50,12 @@ def blend_reverse(img: Image.Image, pos, src, alpha):
 
     dst = img.getpixel(pos)
 
-    # May go beyond range 0-255 for RGB components
+    # No need to worry if any of (r, g, b) go out of range 0-255
     r = to_int((to_float(dst[0]) - to_float(src[0]) * alpha) / (1.0 - alpha))
     g = to_int((to_float(dst[1]) - to_float(src[1]) * alpha) / (1.0 - alpha))
     b = to_int((to_float(dst[2]) - to_float(src[2]) * alpha) / (1.0 - alpha))
 
-    # ... because they're clipped to range 0-255 inside
+    # ... because they're clipped to range 0-255 inside putpixel
     img.putpixel(pos, (r, g, b))
 
 def smudge_water(im, x, y, brush):
@@ -118,13 +118,12 @@ def apply_all(image, steps):
 
     return copy
 
-def save_instructions_txt(steps, filename):
-
+def save_instructions_txt(steps, filename, hotbar_capacity):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     with open(filename, 'w') as fout:
         offsets = {'w': '', 'p': ' ', 'o': '  '}
-        hints = calc_hotbar_exchange_hints(steps)
+        hints = calc_hotbar_exchange_hints(steps, hotbar_capacity)
 
         annotation='''\
 # Legend:
@@ -174,7 +173,14 @@ def save_intermediate_images(image, steps, apply_per_brush, tile_pos, base_direc
 
     return copy
 
-def make_tiled_image(target, initial_image, tile_size, error_tolerance, output_dir, save_debug_img):
+def make_tiled_image(
+        target,
+        initial_image,
+        tile_size,
+        error_tolerance,
+        output_dir,
+        save_debug_img,
+        hotbar_capacity=8):
     x_tiles = math.ceil(target.width / tile_size)
     y_tiles = math.ceil(target.height / tile_size)
 
@@ -207,7 +213,8 @@ def make_tiled_image(target, initial_image, tile_size, error_tolerance, output_d
             total_steps += len(steps)
 
             save_instructions_txt(steps, os.path.join(output_dir,
-                    'instructions', f'row{ytile + 1}_column{xtile + 1}.txt'))
+                    'instructions', f'row{ytile + 1}_column{xtile + 1}.txt'),
+                    hotbar_capacity)
 
             if save_debug_img:
                 apply_per_brush = {'p': paint_1px, 'w': smudge_water, 'o': smudge_oil}
@@ -227,30 +234,25 @@ def make_tiled_image(target, initial_image, tile_size, error_tolerance, output_d
 
     result_image.save(sys.argv[2])
 
-def calc_hotbar_exchange_hints(steps):
-    HOTBAR_CAPACITY = 8
-
+def calc_hotbar_exchange_hints(steps, hotbar_capacity):
     all_indexes = {}
 
-    for i, (x, y, color, brush_type) in enumerate(steps):
+    for i, (_, _, color, brush_type) in enumerate(steps):
         item = (color, brush_type)
-        if item in all_indexes:
-            all_indexes[item].append(i)
-        else:
-            all_indexes[item] = [i]
+        all_indexes.setdefault(item, []).append(i)
 
-    for item in all_indexes.keys():
-        all_indexes[item].append(float('inf'))
+    for indexes in all_indexes.values():
+        indexes.append(float('inf'))
 
     hints = {}
     hotbar = set()
     current_indexes = {item: 0 for item in all_indexes.keys()}
 
-    for i, (x, y, color, brush_type) in enumerate(steps):
+    for i, (_, _, color, brush_type) in enumerate(steps):
         item = (color, brush_type)
 
         if item not in hotbar:
-            if len(hotbar) >= HOTBAR_CAPACITY:
+            if len(hotbar) >= hotbar_capacity:
                 furthest_item = max(((item, all_indexes[item][current_indexes[item]])
                         for item in hotbar), key=lambda el: el[1])[0]
 
