@@ -352,7 +352,7 @@ def get_dependencies(steps, sizes):
 
     return steps_over, steps_under
 
-def minimize_movement(steps, sizes, distance_func):
+def minimize_movement(steps, sizes, distance_func, chunk_size=16):
     if len(steps) == 0:
         return steps
 
@@ -367,6 +367,10 @@ def minimize_movement(steps, sizes, distance_func):
     # Closest to top-left corner. But it's okay to choose any other smudge.
     current_step = min(((i, steps[i][0] + steps[i][1]) for i in candidates),
             key=lambda el: el[1])[0]
+
+    width = sizes[0]
+    chunk_of_step = [((y // chunk_size) * width + (x // chunk_size))
+            for (x, y, _, _) in steps]
 
     result = [steps[current_step]]
 
@@ -392,7 +396,8 @@ def minimize_movement(steps, sizes, distance_func):
             break
 
         next_step = min(((other, dist) for (other, dist)
-                in distances[current_step].items()), key=lambda el: el[1])[0]
+                in distances[current_step].items()),
+                key=lambda el: (chunk_of_step[el[0]], el[1]))[0]
         del distances[current_step]
         for others in distances.values():
             # No-throw variant of "del others[current_step]"
