@@ -125,33 +125,46 @@ def save_instructions_txt(steps, filename, hotbar_capacity):
         offsets = {'w': '', 'p': ' ', 'o': '  '}
         hints = calc_hotbar_exchange_hints(steps, hotbar_capacity)
 
-        annotation='''\
+        legend='''\
 # Legend:
 # x: column [1..width]
-# y: row [1..height] (from top to bottom)
-# t: brush type:
+# y: row    [1..height] (from top to bottom)
+# t: brush type
 #     p: 1 pixel brush
 #     w: watercolor brush
 #     o: oil brush
-
-#  #:   x  y  t color
 '''
-        fout.write(annotation)
+        orderings = {'w': 0, 'p': 1, 'o': 2}
+        unique_brushes = sorted({(c, t) for (_, _, c, t) in steps},
+                key=lambda el: (orderings[el[1]], el[0]))
+        used_brushes = '# Used brushes: ' + ', '.join(f'{t} {c}' for (c, t)
+                in unique_brushes) + '\n'
+        header = '#   #:  ( x  y)  t color\n'
 
-        for i, (x, y, brush, brush_type) in enumerate(steps):
+        fout.write('\n'.join([legend, used_brushes, header]))
+
+        for i, (x, y, color, brush_type) in enumerate(steps):
+            aux_info = []
+            if i in hints.keys():
+                to_remove = '# - ' + ', '.join(f'{t} {c}' for c, t in hints[i]['remove']) + '\n'
+                to_add = '# + ' + ', '.join(f'{t} {c}' for c, t in hints[i]['add']) + '\n'
+                aux_info.append(to_remove + to_add)
+
             if i == 0:
-                current_x, current_y = x, y
-            elif not (x == current_x and y == current_y):
-                dx, dy = x - current_x, y - current_y
+                last_x, last_y = x, y
+            elif x != last_x or y != last_y:
+                dx, dy = x - last_x, y - last_y
                 horizontal_move = f'> {dx}' if dx > 0 else (f'< {-dx}' if dx < 0 else '')
                 vertical_move = f'v {dy}' if dy > 0 else (f'^ {-dy}' if dy < 0 else '')
+                aux_info.append('#    ' + f'{horizontal_move} {vertical_move}'.strip())
 
-                fout.write('\n#    ' + f'{horizontal_move} {vertical_move}'.strip() + '\n')
+                last_x, last_y = x, y
 
-                current_x, current_y = x, y
+            aux_str = '\n' + '\n'.join(aux_info) + '\n' if len(aux_info) != 0 else ''
+            if len(aux_str) != 0:
+                fout.write(aux_str)
 
-            smudge = f'{i+1:5}:  ({x+1:2} {y+1:2})  {offsets[brush_type]}{brush_type} {brush:10}'
-            smudge += f' - {hints[i][1]} {hints[i][0]}\n' if i in hints else '\n'
+            smudge = f'{i+1:5}:  ({x+1:2} {y+1:2})  {offsets[brush_type]}{brush_type} {color:10}\n'
             fout.write(smudge)
 
 def save_intermediate_images(image, steps, apply_per_brush, tile_pos, base_directory):
@@ -234,36 +247,74 @@ def make_tiled_image(
 
     result_image.save(sys.argv[2])
 
-def calc_hotbar_exchange_hints(steps, hotbar_capacity):
-    all_indexes = {}
+def calc_hotbar_exchanges(steps, hotbar_capacity):
+    unique_items = {(color, brush_type) for (_, _, color, brush_type) in steps}
 
+    all_indexes = {item: [] for item in unique_items}
     for i, (_, _, color, brush_type) in enumerate(steps):
         item = (color, brush_type)
-        all_indexes.setdefault(item, []).append(i)
-
+        all_indexes[item].append(i)
     for indexes in all_indexes.values():
         indexes.append(float('inf'))
 
-    hints = {}
-    hotbar = set()
-    current_indexes = {item: 0 for item in all_indexes.keys()}
+    deltas_back = []
+    current_deltas = {item: float('inf') for item in unique_items}
+    for _, _, color, brush_type in steps:
+        for item in current_deltas.keys():
+            current_deltas[item] += 1
 
+        current_item = (color, brush_type)
+        current_deltas[current_item] = 0
+        deltas_back.append(current_deltas.copy())
+
+    exchanges = []
+    hotbar = set()
+    current_indexes = {item: 0 for item in unique_items}
     for i, (_, _, color, brush_type) in enumerate(steps):
         item = (color, brush_type)
+        hotbar.add(item)
+        if len(hotbar) > hotbar_capacity:
+            furthest_item = max(((item, all_indexes[item][current_indexes[item]])
+                    for item in hotbar), key=lambda el: (el[1], el[0][0], el[0][1]))[0]
+            hotbar.remove(furthest_item)
 
-        if item not in hotbar:
-            if len(hotbar) >= hotbar_capacity:
-                furthest_item = max(((item, all_indexes[item][current_indexes[item]])
-                        for item in hotbar), key=lambda el: el[1])[0]
-
-                hotbar.remove(furthest_item)
-                hints[i] = furthest_item
-
-            hotbar.add(item)
+            min_step = i - deltas_back[i][furthest_item] + 1
+            max_step = i # Inclusive
+            exchanges.append({'min_step': min_step, 'max_step': max_step,
+                    'add': item, 'remove': furthest_item})
 
         current_indexes[item] += 1
 
-    return hints
+    return exchanges
+
+def group_hotbar_exchanges(exchanges):
+    endpoints = []
+    for i, exchange in enumerate(exchanges):
+        endpoints.append((exchange['min_step'], i, 'min'))
+        endpoints.append((exchange['max_step'], i, 'max'))
+    endpoints.sort(key=lambda el: (el[0], 0 if el[2] == 'min' else 1))
+
+    grouped_exchanges = {}
+    current_group = {}
+    visited = set()
+    used_exchanges = set()
+    for step, exchange_index, point_type in reversed(endpoints):
+        exchange = exchanges[exchange_index]
+        if point_type == 'max':
+            current_group.setdefault('add', []).append(exchange['add'])
+            current_group.setdefault('remove', []).append(exchange['remove'])
+            used_exchanges.add(exchange_index)
+        elif point_type == 'min' and exchange_index not in visited:
+            visited.update(used_exchanges)
+            grouped_exchanges[step] = current_group.copy()
+            current_group.clear()
+            used_exchanges.clear()
+
+    return grouped_exchanges
+
+def calc_hotbar_exchange_hints(steps, hotbar_capacity):
+    exchanges = calc_hotbar_exchanges(steps, hotbar_capacity)
+    return group_hotbar_exchanges(exchanges)
 
 def get_dependencies(steps, sizes):
     width, height = sizes
