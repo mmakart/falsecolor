@@ -436,7 +436,7 @@ def main():
         if initial_image.size != target.size:
             raise ValueError('Canvas and target must have equal width and height')
     else:
-        initial_image = Image.new(target.mode, target.size, (255, 255, 255))
+        initial_image = Image.new('RGB', target.size, (255, 255, 255))
 
     # output image name with extention removed (i.e. 'nature' for 'my/dir/name/nature.png')
     output_dir = os.path.splitext(os.path.split(sys.argv[2])[-1])[0]
