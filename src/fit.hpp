@@ -16,8 +16,7 @@ struct ReversedGreedyFitter {
             const Image& target,
             const Image& canvas,
             DType error_tolerance,
-            const std::vector<size_t>& allowed_brush_types
-            )
+            const std::vector<size_t>& allowed_brush_types)
         : m_width(target.width())
         , m_height(target.height())
         , m_threshold_alpha{error_tolerance}
@@ -25,36 +24,35 @@ struct ReversedGreedyFitter {
         , m_allowed_brush_types(allowed_brush_types)
         , m_canvas(canvas)
         , m_target(target)
+        , m_oklab_target(m_width, m_height)
         , m_rev_canvas(target)
-        , m_errors_added(target.width(), target.height(), {0, 0, 0})
-        , m_abs_errors_added(target.width(), target.height(), 0)
-        , m_abs_errors_if_canvas(target.width(), target.height(), 0)
-        , m_acc_alphas(target.width(), target.height(), 1)
-        , m_stats(target.width(), target.height())
+        , m_errors_added(m_width, m_height, {0, 0, 0})
+        , m_abs_errors_added(m_width, m_height, 0)
+        , m_abs_errors_if_canvas(m_width, m_height, 0)
+        , m_acc_alphas(m_width, m_height, 1)
+        , m_stats(m_width, m_height)
     {
+        std::transform(m_target.cbegin(), m_target.cend(),
+                m_oklab_target.begin(), rgb_to_oklab<DType>);
         init_pixel_stats();
     }
 
     std::vector<Smudge<DType>> fit() {
         std::vector<Smudge<DType>> result;
 
-        int num_pixels_to_process{};
-
         while (true) {
             Smudge<DType> best_smudge{};
-
             DType best_error{1000000}, best_distance{1000000},
                     best_acc_alpha_reduced{-1000000};
-
 #ifdef CONSIDER_ALPHA
-            num_pixels_to_process = std::count_if(
+            int num_pixels_to_process = std::count_if(
                     m_acc_alphas.cbegin(), m_acc_alphas.cend(),
                     [this](DType el) {
                         return el > m_threshold_alpha;
                     }
             );
 #else
-            num_pixels_to_process = std::count_if(
+            int num_pixels_to_process = std::count_if(
                     m_abs_errors_if_canvas.cbegin(),
                     m_abs_errors_if_canvas.cend(),
                     [this](DType el) {
@@ -62,7 +60,6 @@ struct ReversedGreedyFitter {
                     }
             );
 #endif
-
             if (num_pixels_to_process == 0) {
                 break;
             }
@@ -71,33 +68,20 @@ struct ReversedGreedyFitter {
                 for (Signed x = 0; x < m_width; ++x) {
                     for (size_t type_idx : m_allowed_brush_types) {
 #ifdef CONSIDER_ALPHA
-                        const bool small_acc_alpha {
-                            m_stats(x, y).threshold_alpha_count_per_brush_type[type_idx] == 0
-                        };
-
-                        if (small_acc_alpha) {
-                            continue;
-                        }
+                        if (m_stats(x, y).threshold_alpha_count_per_brush_type[type_idx] == 0)
 #else
-                        const bool small_error_here {
-                            m_stats(x, y).threshold_error_count_per_brush_type[type_idx] == 0
-                        };
-
-                        if (small_error_here) {
-                            continue;
-                        }
+                        if (m_stats(x, y).threshold_error_count_per_brush_type[type_idx] == 0)
 #endif
+                            continue;
+
                         using PredefinedBrushes::num_colors;
                         for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
-                            const DType error {
-                                    m_stats(x, y).errors_per_brush_type(color_idx, type_idx)
-                            };
-                            const DType distance {
-                                    m_stats(x, y).distances_per_brush_type(color_idx, type_idx)
-                            };
-                            const DType acc_alpha_reduced {
-                                    m_stats(x, y).acc_alpha_reduced_per_brush_type[type_idx]
-                            };
+                            const DType error{m_stats(x, y)
+                                    .errors_per_brush_type(color_idx, type_idx)};
+                            const DType distance{m_stats(x, y)
+                                    .distances_per_brush_type(color_idx, type_idx)};
+                            const DType acc_alpha_reduced{m_stats(x, y)
+                                    .acc_alpha_reduced_per_brush_type[type_idx]};
 
                             // TODO: replace to weighted sum?
                             if ((error < best_error) ||
@@ -132,7 +116,7 @@ struct ReversedGreedyFitter {
 
 private:
     struct PixelStats {
-        // Stored on stack for memory locality and performance.
+        // Stored together for memory locality and performance.
         Array2DConstDim<DType,
                 PredefinedBrushes::num_colors,
                 PredefinedBrushes::num_alphas> excessive_errors_per_alpha{};
@@ -190,7 +174,7 @@ private:
 
         const SmudgeProperties<DType>& props{all_types[smudge.type_idx]};
 
-        // Doesn't work correctly with brushes bigger than of plus shape (3x3)
+        // Doesn't work correctly with brushes bigger than of plus shape (3x3).
         const Signed rhombic_radius{props.num_pixels == 5 ? 2 : 1};
         const Signed start_dy{-rhombic_radius};
         const Signed end_dy{rhombic_radius + 1};
@@ -220,19 +204,20 @@ private:
             const DType alpha{all_alphas[alpha_idx]};
 
             for (size_t color_idx = 0; color_idx < num_colors; ++color_idx) {
-                const Rgb<DType> rgb_error = error_from_reversed_blend(
+                const Rgb<DType> rgb_error{error_from_reversed_blend(
                         m_rev_canvas(x, y),
                         premul(alpha_idx, color_idx),
                         alpha,
-                        m_acc_alphas(x, y)
-                );
-
-                const DType abs_error = rgb_to_distance(rgb_error);
+                        m_acc_alphas(x, y))};
+                const Oklab<DType> target_with_error{rgb_to_oklab(m_target(x, y) +
+                        rgb_error)};
+                const DType abs_error{oklab_distance(m_oklab_target(x, y),
+                        target_with_error)};
 
                 m_stats(x, y).excessive_errors_per_alpha(color_idx, alpha_idx) =
-                        std::max(static_cast<DType>(0), abs_error /
-                        m_acc_alphas(x, y) - m_error_tolerance * alpha) *
-                        m_acc_alphas(x, y);
+                        std::max(static_cast<DType>(0), abs_error +
+                        0.5f * // To avoid cascade error spreading to surrounding pixels.
+                        m_abs_errors_added(x, y) - m_error_tolerance);
             }
         }
     }
@@ -256,10 +241,17 @@ private:
                         continue;
                     }
 
-                    sum += color_dist(
-                            m_rev_canvas(new_x, new_y),
-                            all_colors[color_idx].color
-                    ) * m_acc_alphas(new_x, new_y);
+                    // Prefer gray brushes in little saturated target pixels.
+                    const DType saturation_coef{1.0f + 7.0f * std::max(0.0f,
+                            hsv_saturation(all_colors[color_idx].color) -
+                            hsv_saturation(m_target(new_x, new_y)))}; // 1..8
+
+                    // Change to Oklab distance? Probably not because:
+                    // 1. Not much difference in result quality.
+                    // 2. It'd slow down the fitting algorithm by 2-3 times.
+                    sum += rgb_distance(m_rev_canvas(new_x, new_y),
+                            all_colors[color_idx].color) * saturation_coef *
+                            m_acc_alphas(new_x, new_y);
                 }
 
                 m_stats(x, y).distances_per_brush_type(color_idx, type_idx) = sum;
@@ -268,13 +260,17 @@ private:
     }
 
     void update_errors_if_canvas(Signed x, Signed y) {
-        m_abs_errors_if_canvas(x, y) = rgb_to_distance(
-                error_from_reversed_blend(
-                    m_rev_canvas(x, y),
-                    m_canvas(x, y),
-                    static_cast<DType>(1),
-                    m_acc_alphas(x, y)
-        ));
+        const Rgb<DType> rgb_error{error_from_reversed_blend(
+                m_rev_canvas(x, y),
+                m_canvas(x, y),
+                static_cast<DType>(1),
+                m_acc_alphas(x, y))};
+
+        const Oklab<DType> target_with_error{rgb_to_oklab(m_target(x, y) +
+                rgb_error)};
+
+        m_abs_errors_if_canvas(x, y) = oklab_distance(m_oklab_target(x, y),
+                target_with_error);
     }
 
 #ifdef CONSIDER_ALPHA
@@ -391,11 +387,16 @@ private:
             const Rgb<DType>& color_premul,
             DType alpha)
     {
-        Rgb<DType> error = error_from_reversed_blend(
-                m_rev_canvas(x, y), color_premul, alpha, m_acc_alphas(x, y));
+        const Rgb<DType> rgb_error{error_from_reversed_blend(
+                m_rev_canvas(x, y), color_premul, alpha, m_acc_alphas(x, y))};
 
-        m_errors_added(x, y) += error;
-        m_abs_errors_added(x, y) += rgb_to_distance(error);
+        m_errors_added(x, y) += rgb_error;
+
+        const Oklab<DType> target_with_error{rgb_to_oklab(m_target(x, y) +
+                m_errors_added(x, y))};
+        const DType abs_error{oklab_distance(m_oklab_target(x, y),
+                target_with_error)};
+        m_abs_errors_added(x, y) = abs_error;
     }
 
     void update_rev_canvas_and_acc_alphas(
@@ -534,6 +535,8 @@ private:
     // Reference image of the target image
     const Array2D<Rgb<DType>> m_target;
 
+    Array2D<Oklab<DType>> m_oklab_target; // Should be const
+
     // Working area for reversed applying of smudges.
     // Initialy is the same as the target image.
     Array2D<Rgb<DType>> m_rev_canvas;
@@ -543,7 +546,8 @@ private:
     // calculations in extreme cases. The closer to 0, the better.
     Array2D<Rgb<DType>> m_errors_added;
 
-    // Grayscale variation of m_errors_added (e.g. euclidean RGB distance)
+    // Grayscale variation of m_errors_added (e.g. euclidean RGB distance).
+    // Currently it's OkLAB distance between target and target with error.
     Array2D<DType> m_abs_errors_added;
 
     // If reverse-apply or "steal" the pixel from in-game canvas.
@@ -559,7 +563,7 @@ private:
     // the more it drops). Initially is 1 everywhere.
     Array2D<DType> m_acc_alphas;
 
-    // Necessary data for picking next smudge
+    // Necessary data for picking next smudge.
     Array2D<PixelStats> m_stats;
 };
 

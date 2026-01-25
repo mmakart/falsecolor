@@ -207,7 +207,7 @@ inline Rgb<DType> error_from_reversed_blend(
     };
 }
 
-inline constexpr DType max_abs_rgb_error{std::sqrt(static_cast<DType>(3))};
+inline constexpr DType max_abs_rgb_error{std::sqrt(3)};
 
 template <typename DType>
 inline DType rgb_to_distance(const Rgb<DType>& diff) {
@@ -215,7 +215,7 @@ inline DType rgb_to_distance(const Rgb<DType>& diff) {
 }
 
 template <typename DType>
-inline DType color_dist(const Rgb<DType>& c1, const Rgb<DType>& c2) {
+inline DType rgb_distance(const Rgb<DType>& c1, const Rgb<DType>& c2) {
     const Rgb<DType> diff{c2.r - c1.r, c2.g - c1.g, c2.b - c1.b};
 
     return rgb_to_distance(diff);
@@ -230,9 +230,7 @@ template <typename DType>
 inline DType reverse_blend_channel(DType result, DType source_premul, DType alpha) {
     return alpha == 1
             ? result // Value doesn't matter
-            : std::clamp((result - source_premul) / (1 - alpha),
-                    static_cast<DType>(0),
-                    static_cast<DType>(1));
+            : std::clamp((result - source_premul) / (1 - alpha), 0.0f, 1.0f);
 }
 
 template <typename DType>
@@ -246,4 +244,44 @@ inline Rgb<DType> reverse_blend(
             reverse_blend_channel(result.g, source_premul.g, alpha),
             reverse_blend_channel(result.b, source_premul.b, alpha),
     };
+}
+
+template <typename DType>
+inline DType gamma_to_linear(DType c) {
+    return c >= 0.04045f ? std::pow((c + 0.055f) / 1.055f, 2.4f) : c / 12.92f;
+}
+
+template <typename DType>
+struct Oklab {
+    DType l{};
+    DType a{};
+    DType b{};
+};
+
+template <typename DType>
+inline Oklab<DType> rgb_to_oklab(const Rgb<DType>& rgb) {
+    const DType r_l{gamma_to_linear(rgb.r)};
+    const DType g_l{gamma_to_linear(rgb.g)};
+    const DType b_l{gamma_to_linear(rgb.b)};
+
+    const DType l{std::cbrt(0.4122214708f * r_l + 0.5363325363f * g_l + 0.0514459929f * b_l)};
+    const DType m{std::cbrt(0.2119034982f * r_l + 0.6806995451f * g_l + 0.1073969566f * b_l)};
+    const DType s{std::cbrt(0.0883024619f * r_l + 0.2817188376f * g_l + 0.6299787005f * b_l)};
+
+    return {
+        0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s,
+        1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
+        0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s,
+    };
+}
+
+template <typename DType>
+inline DType oklab_distance(const Oklab<DType>& c1, const Oklab<DType>& c2) {
+    return std::hypot(c2.a - c1.a, c2.b - c1.b) + std::abs(c2.l - c1.l);
+}
+
+template <typename DType>
+inline DType hsv_saturation(const Rgb<DType>& rgb) {
+    const auto [min, max] = std::minmax({rgb.r, rgb.g, rgb.b});
+    return max == 0 ? 0 : 1 - min / max;
 }
