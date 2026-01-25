@@ -1,5 +1,6 @@
 from PIL import Image
 import falsecolor
+from collections import Counter
 import os.path
 import math
 import numpy as np
@@ -123,6 +124,7 @@ def save_instructions_txt(steps, filename, hotbar_capacity):
 
     with open(filename, 'w') as fout:
         offsets = {'w': '', 'p': ' ', 'o': '  '}
+
         hints = calc_hotbar_exchange_hints(steps, hotbar_capacity)
 
         legend='''\
@@ -134,11 +136,15 @@ def save_instructions_txt(steps, filename, hotbar_capacity):
 #     w: watercolor brush
 #     o: oil brush
 '''
+        durabilities = {'p': 256, 'w': 57, 'o': 56}
         orderings = {'w': 0, 'p': 1, 'o': 2}
-        unique_brushes = sorted({(c, t) for (_, _, c, t) in steps},
-                key=lambda el: (orderings[el[1]], el[0]))
-        used_brushes = '# Used brushes: ' + ', '.join(f'{t} {c}' for (c, t)
-                in unique_brushes) + '\n'
+
+        counts = Counter((c, t) for (_, _, c, t) in steps)
+        items_spent = {(c, t): count / durabilities[t] for ((c, t), count) in counts.items()}
+
+        used_brushes = '# Used brushes:\n' + '\n'.join(f'# {t + ' ' + c:12} {spent:6.3} items'
+                for ((c, t), spent) in sorted(items_spent.items(),
+                key=lambda el: (orderings[el[0][1]], -el[1], el[0][0]))) + '\n'
         header = '#   #:  ( x  y)  t color\n'
 
         fout.write('\n'.join([legend, used_brushes, header]))
