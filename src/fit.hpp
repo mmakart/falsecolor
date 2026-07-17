@@ -392,7 +392,7 @@ private:
         m_abs_acc_errors(x, y) = abs_error;
     }
 
-    void update_rev_canvas_and_alpha(
+    void update_rev_canvas_and_alphas(
             Signed x,
             Signed y,
             size_t color_idx,

@@ -99,11 +99,7 @@ def paint_1px_reverse(im, x, y, brush):
     im.putpixel((x, y), (255, 255, 255))
 
 def calc_smudges(target, canvas, error_tolerance):
-    opt_start = time.time()
     steps = falsecolor.fit(np.array(target), np.array(canvas), error_tolerance)
-    opt_time = time.time() - opt_start
-
-    print(f'fitting took {opt_time:.4} seconds')
 
     return steps
 
@@ -119,13 +115,13 @@ def apply_all(image, steps):
 
     return copy
 
-def save_instructions_txt(steps, filename, hotbar_capacity):
+def save_instructions_txt(steps, filename, hotbar_capacity=8):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     with open(filename, 'w') as fout:
         offsets = {'w': '', 'p': ' ', 'o': '  '}
 
-        hints = calc_hotbar_exchange_hints(steps, hotbar_capacity)
+        hints, starting_hotbar = calc_hotbar_exchange_hints(steps, hotbar_capacity)
 
         legend='''\
 # Legend:
@@ -137,23 +133,35 @@ def save_instructions_txt(steps, filename, hotbar_capacity):
 #     o: oil brush
 '''
         durabilities = {'p': 256, 'w': 57, 'o': 56}
-        orderings = {'w': 0, 'p': 1, 'o': 2}
 
         counts = Counter((c, t) for (_, _, c, t) in steps)
         items_spent = {(c, t): count / durabilities[t] for ((c, t), count) in counts.items()}
 
-        used_brushes = '# Used brushes:\n' + '\n'.join(f'# {t + ' ' + c:12} {spent:6.3} items'
-                for ((c, t), spent) in sorted(items_spent.items(),
-                key=lambda el: (orderings[el[0][1]], -el[1], el[0][0]))) + '\n'
+        order_by_type = {'w': 0, 'p': 1, 'o': 2}
+
+        def spent_brush_sort(brush_and_spent):
+            ((color, brush_type), spent) = brush_and_spent
+            return (order_by_type[brush_type], -spent, color)
+
+        def brush_sort(brush):
+            color, brush_type = brush
+            return (order_by_type[brush_type], color)
+
+        used_brushes = '# Used brushes:\n' + ''.join(f'# {t + ' ' + c:12} {spent:6.3f} items\n'
+                for ((c, t), spent) in sorted(items_spent.items(), key=spent_brush_sort))
+        hotbar = '# Starting hotbar:\n# ' + ', '.join(f'{t} {c}' for c, t
+                in sorted(starting_hotbar, key=brush_sort)) + '\n'
         header = '#   #:  ( x  y)  t color\n'
 
-        fout.write('\n'.join([legend, used_brushes, header]))
+        fout.write('\n'.join([legend, used_brushes, hotbar, header]))
 
         for i, (x, y, color, brush_type) in enumerate(steps):
             aux_info = []
             if i in hints.keys():
-                to_remove = '# - ' + ', '.join(f'{t} {c}' for c, t in hints[i]['remove']) + '\n'
-                to_add = '# + ' + ', '.join(f'{t} {c}' for c, t in hints[i]['add']) + '\n'
+                to_remove = '# - ' + ', '.join(f'{t} {c}' for c, t
+                        in sorted(hints[i]['remove'], key=brush_sort)) + '\n'
+                to_add = '# + ' + ', '.join(f'{t} {c}' for c, t
+                        in sorted(hints[i]['add'], key=brush_sort)) + '\n'
                 aux_info.append(to_remove + to_add)
 
             if i == 0:
@@ -162,16 +170,14 @@ def save_instructions_txt(steps, filename, hotbar_capacity):
                 dx, dy = x - last_x, y - last_y
                 horizontal_move = f'> {dx}' if dx > 0 else (f'< {-dx}' if dx < 0 else '')
                 vertical_move = f'v {dy}' if dy > 0 else (f'^ {-dy}' if dy < 0 else '')
-                aux_info.append('#    ' + f'{horizontal_move} {vertical_move}'.strip())
+                aux_info.append(f'#    {horizontal_move} {vertical_move}'.strip())
 
                 last_x, last_y = x, y
 
-            aux_str = '\n' + '\n'.join(aux_info) + '\n' if len(aux_info) != 0 else ''
-            if len(aux_str) != 0:
-                fout.write(aux_str)
+            if len(aux_info) != 0:
+                fout.write('\n' + '\n'.join(aux_info) + '\n')
 
-            smudge = f'{i+1:5}:  ({x+1:2} {y+1:2})  {offsets[brush_type]}{brush_type} {color:10}\n'
-            fout.write(smudge)
+            fout.write(f'{i+1:5}:  ({x+1:2} {y+1:2})  {offsets[brush_type]}{brush_type} {color}\n')
 
 def save_intermediate_images(image, steps, apply_per_brush, tile_pos, base_directory):
     xtile, ytile = tile_pos
@@ -198,10 +204,9 @@ def make_tiled_image(
         tile_size,
         error_tolerance,
         output_dir,
-        save_debug_img,
-        hotbar_capacity=8):
-    x_tiles = math.ceil(target.width / tile_size)
-    y_tiles = math.ceil(target.height / tile_size)
+        save_debug_img):
+    x_tiles = (target.width + tile_size - 1) // tile_size
+    y_tiles = (target.height + tile_size - 1) // tile_size
 
     print(f'tiling {x_tiles}x{y_tiles}')
 
@@ -215,43 +220,62 @@ def make_tiled_image(
                     xtile * tile_size + tile_size, ytile * tile_size + tile_size)
             print(crop_coords)
 
-            target_tile = target.crop(crop_coords)
-            canvas_tile = initial_image.crop(crop_coords)
+            result_tile, steps = process_tile(target, initial_image,
+                    crop_coords, (xtile, ytile), error_tolerance, output_dir,
+                    save_debug_img)
 
-            steps = calc_smudges(target_tile, canvas_tile, error_tolerance)
-
-            print(f'Total movement before: manhattan={total_movement(steps,
-                    manhattan_distance)} custom={total_movement(steps, custom_distance)}')
-            steps = minimize_movement(steps, (tile_size, tile_size), manhattan_distance)
-            print(f'Total movement after: manhattan={total_movement(steps,
-                    manhattan_distance)} custom={total_movement(steps, custom_distance)}')
-
-            result_tile = apply_all(canvas_tile, steps)
             result_image.paste(result_tile, crop_coords[:2])
-
             total_steps += len(steps)
-
-            save_instructions_txt(steps, os.path.join(output_dir,
-                    'instructions', f'row{ytile + 1}_column{xtile + 1}.txt'),
-                    hotbar_capacity)
-
-            if save_debug_img:
-                apply_per_brush = {'p': paint_1px, 'w': smudge_water, 'o': smudge_oil}
-                rev_apply_per_brush = {'p': paint_1px_reverse,
-                        'w': smudge_water_reverse, 'o': smudge_oil_reverse}
-
-                save_intermediate_images(canvas_tile, steps, apply_per_brush,
-                        (xtile, ytile), os.path.join(output_dir, 'hist'))
-                after_reversed = save_intermediate_images(target_tile,
-                        reversed(steps), rev_apply_per_brush, (xtile, ytile),
-                        os.path.join(output_dir, 'rev'))
-                save_intermediate_images(after_reversed, steps,
-                        apply_per_brush, (xtile, ytile),
-                        os.path.join(output_dir, 'after_rev'))
 
     print(f'    Total smudges in all canvases: {total_steps}')
 
     result_image.save(sys.argv[2])
+
+def process_tile(target,
+        initial_image,
+        crop_coords,
+        tile_coords,
+        error_tolerance,
+        output_dir,
+        save_debug_img):
+    width = crop_coords[2] - crop_coords[0]
+    height = crop_coords[3] - crop_coords[1]
+    xtile, ytile = tile_coords
+
+    target_tile = target.crop(crop_coords)
+    canvas_tile = initial_image.crop(crop_coords)
+
+    start = time.time()
+    steps = calc_smudges(target_tile, canvas_tile, error_tolerance)
+    print(f'fitting took {time.time() - start:.4} seconds')
+
+    print(f'Total movement before: manhattan={total_movement(steps,
+            manhattan_distance)} custom={total_movement(steps, custom_distance)}')
+    steps = minimize_movement(steps, (width, height), manhattan_distance)
+    print(f'Total movement after: manhattan={total_movement(steps,
+            manhattan_distance)} custom={total_movement(steps, custom_distance)}')
+
+    result_tile = apply_all(canvas_tile, steps)
+
+    save_instructions_txt(steps, os.path.join(output_dir,
+            'instructions', f'row{ytile + 1}_column{xtile + 1}.txt'))
+    if save_debug_img:
+        save_debug_images(canvas_tile, target_tile, steps, (xtile, ytile),
+                output_dir)
+
+    return result_tile, steps
+
+def save_debug_images(canvas, target, steps, tile_coords, output_dir):
+    apply_per_brush = {'p': paint_1px, 'w': smudge_water, 'o': smudge_oil}
+    rev_apply_per_brush = {'p': paint_1px_reverse, 'w': smudge_water_reverse,
+            'o': smudge_oil_reverse}
+
+    save_intermediate_images(canvas, steps, apply_per_brush, tile_coords,
+             os.path.join(output_dir, 'hist'))
+    after_reversed = save_intermediate_images(target, reversed(steps),
+            rev_apply_per_brush, tile_coords, os.path.join(output_dir, 'rev'))
+    save_intermediate_images(after_reversed, steps, apply_per_brush,
+            tile_coords, os.path.join(output_dir, 'after_rev'))
 
 def calc_hotbar_exchanges(steps, hotbar_capacity):
     unique_items = {(color, brush_type) for (_, _, color, brush_type) in steps}
@@ -275,12 +299,17 @@ def calc_hotbar_exchanges(steps, hotbar_capacity):
 
     exchanges = []
     hotbar = set()
-    current_indexes = {item: 0 for item in unique_items}
+    num_occurences = {item: 0 for item in unique_items}
+    any_exchange = False
     for i, (_, _, color, brush_type) in enumerate(steps):
         item = (color, brush_type)
         hotbar.add(item)
+
+        if not any_exchange and len(hotbar) == hotbar_capacity:
+            starting_hotbar = hotbar.copy()
+
         if len(hotbar) > hotbar_capacity:
-            furthest_item = max(((item, all_indexes[item][current_indexes[item]])
+            furthest_item = max(((item, all_indexes[item][num_occurences[item]])
                     for item in hotbar), key=lambda el: (el[1], el[0][0], el[0][1]))[0]
             hotbar.remove(furthest_item)
 
@@ -288,41 +317,45 @@ def calc_hotbar_exchanges(steps, hotbar_capacity):
             max_step = i # Inclusive
             exchanges.append({'min_step': min_step, 'max_step': max_step,
                     'add': item, 'remove': furthest_item})
+            any_exchange = True
 
-        current_indexes[item] += 1
+        num_occurences[item] += 1
 
-    return exchanges
+    if not any_exchange:
+        starting_hotbar = hotbar.copy()
+
+    return exchanges, starting_hotbar
 
 def group_hotbar_exchanges(exchanges):
     endpoints = []
     for i, exchange in enumerate(exchanges):
-        endpoints.append((exchange['min_step'], i, 'min'))
-        endpoints.append((exchange['max_step'], i, 'max'))
-    endpoints.sort(key=lambda el: (el[0], 0 if el[2] == 'min' else 1))
+        endpoints.append((i, exchange['min_step'], 'min'))
+        endpoints.append((i, exchange['max_step'], 'max'))
+    endpoints.sort(key=lambda el: (el[1], 0 if el[2] == 'min' else 1))
 
-    grouped_exchanges = {}
-    current_group = {}
-    visited = set()
-    used_exchanges = set()
-    for step, exchange_index, point_type in reversed(endpoints):
-        exchange = exchanges[exchange_index]
-        if point_type == 'max':
-            current_group.setdefault('add', []).append(exchange['add'])
-            current_group.setdefault('remove', []).append(exchange['remove'])
-            used_exchanges.add(exchange_index)
-        elif point_type == 'min' and exchange_index not in visited:
-            visited.update(used_exchanges)
-            grouped_exchanges[step] = current_group.copy()
-            current_group.clear()
-            used_exchanges.clear()
+    result = {}
+    group = {}
+    used = set()
+    used_for_group = set()
+    for i, step, point_type in endpoints:
+        e = exchanges[i]
+        if point_type == 'min':
+            group.setdefault('add', []).append(e['add'])
+            group.setdefault('remove', []).append(e['remove'])
+            used_for_group.add(i)
+        elif point_type == 'max' and i not in used:
+            used.update(used_for_group)
+            result[step] = group.copy()
+            group.clear()
+            used_for_group.clear()
 
-    return grouped_exchanges
+    return result
 
 def calc_hotbar_exchange_hints(steps, hotbar_capacity):
-    exchanges = calc_hotbar_exchanges(steps, hotbar_capacity)
-    return group_hotbar_exchanges(exchanges)
+    exchanges, starting_hotbar = calc_hotbar_exchanges(steps, hotbar_capacity)
+    return group_hotbar_exchanges(exchanges), starting_hotbar
 
-def get_dependencies(steps, sizes):
+def calc_step_dependencies(steps, sizes):
     width, height = sizes
 
     dcoords = {
@@ -362,7 +395,18 @@ def minimize_movement(steps, sizes, distance_func, chunk_size=16):
     if len(steps) == 0:
         return steps
 
-    steps_over, steps_under = get_dependencies(steps, sizes)
+    steps_over, steps_under = calc_step_dependencies(steps, sizes)
+
+    def calc_chunk_order(sizes, chunk_size):
+        w, h = ((s + chunk_size - 1) // chunk_size for s in sizes)
+        result = [list(range(i, i + w)) for i in range(0, h * w, w)]
+        for i in range(1, h, 2):
+            result[i].reverse() # Snake order
+        return result
+
+    chunk_order = calc_chunk_order(sizes, chunk_size)
+    chunk_of_step = [chunk_order[y // chunk_size][x // chunk_size]
+            for (x, y, _, _) in steps]
 
     candidates = {i for i in range(len(steps)) if i not in steps_under.keys()}
 
@@ -373,10 +417,6 @@ def minimize_movement(steps, sizes, distance_func, chunk_size=16):
     # Closest to top-left corner. But it's okay to choose any other smudge.
     current_step = min(((i, steps[i][0] + steps[i][1]) for i in candidates),
             key=lambda el: el[1])[0]
-
-    width = sizes[0]
-    chunk_of_step = [((y // chunk_size) * width + (x // chunk_size))
-            for (x, y, _, _) in steps]
 
     result = [steps[current_step]]
 
