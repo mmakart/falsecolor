@@ -24,7 +24,8 @@ struct SmudgeProperties {
     std::array<DType, max_pixels> alphas;
     std::array<size_t, max_pixels> alphas_idxs;
 
-    // Not std::string because it wouldn't allow constexpr initialization
+    // Not std::string because it wouldn't allow constexpr initialization,
+    // so it's impossible to create new smudge types at runtime (until C++20).
     std::string_view type;
 };
 
@@ -159,23 +160,26 @@ struct Smudge {
     }
 };
 
+// Calculates the error introduced after reversed alpha blending which
+// cannot be reduced by any subsequent reversed blendings.
 // Standard alpha blending formula: R = (1 - A) * D + A * S
 // or R = (1 - A) * D + S_premul.
 // Possible return value is in range [-1; 1].
-// result and source_premul are expected to be in range [-1; 1].
-// R = result, D = destination, S = source, A = alpha.
+// result, source_premul, source_alpha and image_alpha are expected to be
+// in range [0; 1].
+// R = result, D = destination, S = source, A = source_alpha.
 template <typename DType>
 inline DType channel_error_from_reversed_blend(
         DType result,
         DType source_premul,
-        DType alpha,
-        DType acc_alpha)
+        DType source_alpha,
+        DType image_alpha)
 {
-    if (alpha == 1) {
-        return (source_premul - result) * acc_alpha;
+    if (source_alpha == 1) {
+        return (source_premul - result) * image_alpha;
     }
 
-    DType error = (source_premul - result) / (1 - alpha);
+    DType error = (source_premul - result) / (1 - source_alpha);
 
     if (error >= -1 && error <= 0) {
         error = 0;
@@ -184,8 +188,8 @@ inline DType channel_error_from_reversed_blend(
         error += 1;
     }
 
-    error *= (1 - alpha);
-    error *= acc_alpha;
+    error *= (1 - source_alpha);
+    error *= image_alpha;
 
     return error;
 }
@@ -194,16 +198,16 @@ template <typename DType>
 inline Rgb<DType> error_from_reversed_blend(
         const Rgb<DType>& result,
         const Rgb<DType>& source_premul,
-        DType alpha,
-        DType acc_alpha)
+        DType source_alpha,
+        DType image_alpha)
 {
     return {
         channel_error_from_reversed_blend(
-                result.r, source_premul.r, alpha, acc_alpha),
+                result.r, source_premul.r, source_alpha, image_alpha),
         channel_error_from_reversed_blend(
-                result.g, source_premul.g, alpha, acc_alpha),
+                result.g, source_premul.g, source_alpha, image_alpha),
         channel_error_from_reversed_blend(
-                result.b, source_premul.b, alpha, acc_alpha),
+                result.b, source_premul.b, source_alpha, image_alpha),
     };
 }
 
@@ -221,28 +225,36 @@ inline DType rgb_distance(const Rgb<DType>& c1, const Rgb<DType>& c2) {
     return rgb_to_distance(diff);
 }
 
+// Calculates the result of reversed alpha blending. This effectively
+// reveals pixels values which would have been before normal alpha blending
+// of (S, A) pair whether it were or not.
 // Standard alpha blending formula: R = (1 - A) * D + A * S
 // or R = (1 - A) * D + S_premul.
-// Here it is transformed thus:
+// Here it is transformed thus to get "previous" color:
 // D = (R - S_premul) / (1 - A).
-// R = result, D = destination, S = source, A = alpha.
+// R = result, D = destination, S = source, A = source_alpha.
 template <typename DType>
-inline DType reverse_blend_channel(DType result, DType source_premul, DType alpha) {
-    return alpha == 1
+inline DType reverse_blend_channel(
+        DType result,
+        DType source_premul,
+        DType source_alpha)
+{
+    return source_alpha == 1
             ? result // Value doesn't matter
-            : std::clamp((result - source_premul) / (1 - alpha), 0.0f, 1.0f);
+            : std::clamp((result - source_premul) / (1 - source_alpha),
+            static_cast<DType>(0), static_cast<DType>(1));
 }
 
 template <typename DType>
 inline Rgb<DType> reverse_blend(
         const Rgb<DType>& result,
         const Rgb<DType>& source_premul,
-        DType alpha)
+        DType source_alpha)
 {
     return {
-            reverse_blend_channel(result.r, source_premul.r, alpha),
-            reverse_blend_channel(result.g, source_premul.g, alpha),
-            reverse_blend_channel(result.b, source_premul.b, alpha),
+            reverse_blend_channel(result.r, source_premul.r, source_alpha),
+            reverse_blend_channel(result.g, source_premul.g, source_alpha),
+            reverse_blend_channel(result.b, source_premul.b, source_alpha),
     };
 }
 
